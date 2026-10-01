@@ -1,0 +1,42 @@
+{% extends "base.html" %}
+{% block title %}Dashboard · WorkFinder{% endblock %}
+{% block breadcrumb %}Dashboard{% endblock %}
+{% block content %}
+<section class="page-heading heading-row">
+  <div><p class="eyebrow">{{ today_label }}</p><h1>Your Kraków job search</h1><p>See what changed and focus on the strongest opportunities.</p></div>
+  {% if latest_run %}<div class="last-sync"><span class="live-dot"></span>Last search {{ latest_run.started_at.strftime('%d %b, %H:%M') }}<small>{{ latest_run.sources_checked }} sources · {{ latest_run.duration or 0 }}s</small></div>{% endif %}
+</section>
+
+<section class="metrics-grid">
+  <a href="/jobs?view=new" class="metric accent"><span class="metric-icon">✦</span><div><small>New today</small><strong>{{ new_today }}</strong><em>{{ new_week }} this week</em></div></a>
+  <a href="/jobs" class="metric"><span class="metric-icon violet">▤</span><div><small>Active jobs</small><strong>{{ active_jobs }}</strong><em>in Kraków only</em></div></a>
+  <a href="/applications" class="metric"><span class="metric-icon amber">◫</span><div><small>Applications</small><strong>{{ applications_count }}</strong><em>in your pipeline</em></div></a>
+  <a href="/applications" class="metric"><span class="metric-icon rose">◎</span><div><small>Interviews</small><strong>{{ interviews }}</strong><em>active conversations</em></div></a>
+</section>
+
+{% if watchlist_jobs %}
+<section class="watch-alert"><div class="watch-icon">★</div><div><strong>Watchlist activity</strong><p>{{ watchlist_jobs|length }} new matching role{% if watchlist_jobs|length != 1 %}s{% endif %} from watched companies this week.</p></div><a href="/jobs?view=new">View roles →</a></section>
+{% endif %}
+
+<div class="dashboard-grid">
+  <section>
+    <div class="section-heading"><div><h2>Best recent matches</h2><p>Active roles ranked by transparent matching rules.</p></div><a href="/jobs?view=new">View all →</a></div>
+    <div class="job-grid compact">
+      {% for job in recent_jobs %}{% include "_job_card.html" %}
+      {% else %}<div class="empty-state"><span>⌕</span><h3>No jobs yet</h3><p>Run a search or add a job manually.</p></div>{% endfor %}
+    </div>
+  </section>
+  <aside>
+    <section class="panel skills-panel">
+      <div class="panel-heading"><div><h3>Skills in demand</h3><p>Across matching Kraków roles</p></div><a href="/profile">Edit profile</a></div>
+      {% for skill in skills %}
+      <div class="skill-row"><div class="skill-label"><span>{{ skill.name }}</span><span class="skill-state {{ skill.state|lower }}">{{ skill.state }}</span></div><div class="bar"><i style="width: {{ skill.percent }}%"></i></div><strong>{{ skill.percent }}%</strong></div>
+      {% else %}<p class="empty-copy">Skill trends appear after jobs are added.</p>{% endfor %}
+    </section>
+    <section class="panel next-step">
+      <span class="spark">✦</span><h3>Daily focus</h3><p>Review roles above 70% first, then move promising jobs into your application board.</p>
+      <a class="button dark full" href="/jobs?view=new&min_score=70">Review strong matches</a>
+    </section>
+  </aside>
+</div>
+{% endblock %}

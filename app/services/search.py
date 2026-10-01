@@ -1,0 +1,232 @@
+from __future__ import annotations
+
+import logging
+import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
+from datetime import datetime, timedelta
+
+from sqlalchemy import select
+from sqlalchemy.orm import Session
+
+from app.models import (
+    CandidateProfile,
+    Job,
+    JobOccurrence,
+    ProviderRun,
+    SavedSearch,
+    SearchRun,
+    utcnow,
+)
+from app.scrapers.base import JobPosting, SearchCriteria
+from app.scrapers.common import is_senior_role, relevant_to_krakow
+from app.scrapers.registry import enabled_sources
+from app.services.deduplication import find_duplicate
+from app.services.ignoring import apply_ignore_rules
+from app.services.matching import score_job
+from app.services.normalization import canonicalize_url, job_hash
+
+logger = logging.getLogger(__name__)
+
+DEFAULT_KEYWORDS = [
+    "analyst",
+    "finance",
+    "financial",
+    "data analysis",
+    "research",
+    "economic",
+    "fp&a",
+    "business analysis",
+    "controlling",
+    "reporting",
+    "risk",
+    "credit",
+    "investment",
+    "treasury",
+    "intern",
+    "internship",
+    "staż",
+    "praktyk",
+    "analityk",
+]
+
+
+def _new_job(posting: JobPosting, profile: CandidateProfile | None) -> Job:
+    canonical_url = canonicalize_url(posting.url)
+    job = Job(
+        source=posting.source,
+        source_job_id=posting.source_job_id,
+        canonical_url=canonical_url,
+        original_url=posting.url,
+        title=posting.title[:300],
+        company=posting.company[:200],
+        location=posting.location[:240],
+        country=posting.country,
+        remote_type=posting.remote_type,
+        employment_type=posting.employment_type,
+        seniority=posting.seniority,
+        salary_min=posting.salary_min,
+        salary_max=posting.salary_max,
+        salary_currency=posting.salary_currency,
+        description=posting.description,
+        requirements=posting.requirements,
+        responsibilities=posting.responsibilities,
+        date_posted=posting.date_posted,
+        job_hash=job_hash(posting.company, posting.title, posting.location, posting.description),
+        raw_payload=posting.raw_payload,
+    )
+    result = score_job(job, profile)
+    job.match_score = result.score
+    job.match_explanation = result.explanation
+    job.skills = result.skills
+    job.missing_skills = result.missing_skills
+    job.categories = result.categories
+    return job
+
+
+def _add_occurrence(session: Session, job: Job, posting: JobPosting) -> bool:
+    occurrence_filters = [
+        JobOccurrence.job_id == job.id,
+        JobOccurrence.source == posting.source,
+    ]
+    if posting.source_job_id:
+        occurrence_filters.append(JobOccurrence.source_job_id == posting.source_job_id)
+    else:
+        occurrence_filters.append(JobOccurrence.url == posting.url)
+    occurrence = session.scalar(select(JobOccurrence).where(*occurrence_filters))
+    if occurrence:
+        occurrence.last_seen = utcnow()
+        occurrence.url = posting.url
+        occurrence.raw_payload = posting.raw_payload
+        return False
+    session.add(
+        JobOccurrence(
+            job=job,
+            source=posting.source,
+            source_job_id=posting.source_job_id,
+            url=posting.url,
+            raw_payload=posting.raw_payload,
+        )
+    )
+    return True
+
+
+def import_posting(
+    session: Session, posting: JobPosting, profile: CandidateProfile | None = None
+) -> tuple[Job, str]:
+    duplicate = find_duplicate(session, posting)
+    if duplicate:
+        duplicate.last_seen = utcnow()
+        duplicate.is_active = True
+        if len(posting.description) > len(duplicate.description):
+            duplicate.description = posting.description
+        _add_occurrence(session, duplicate, posting)
+        result = score_job(duplicate, profile)
+        duplicate.match_score = result.score
+        duplicate.match_explanation = result.explanation
+        duplicate.skills = result.skills
+        duplicate.missing_skills = result.missing_skills
+        duplicate.categories = result.categories
+        apply_ignore_rules(session, duplicate)
+        return duplicate, "duplicate"
+    job = _new_job(posting, profile)
+    session.add(job)
+    session.flush()
+    _add_occurrence(session, job, posting)
+    apply_ignore_rules(session, job)
+    return job, "new"
+
+
+def run_search(session: Session) -> SearchRun:
+    started = time.monotonic()
+    search_run = SearchRun()
+    session.add(search_run)
+    session.flush()
+    profile = session.scalar(select(CandidateProfile).limit(1))
+    sources = enabled_sources()
+    configured_searches = session.scalars(
+        select(SavedSearch).where(SavedSearch.enabled.is_(True))
+    ).all()
+    keywords = (
+        sorted({keyword for search in configured_searches for keyword in search.keywords})
+        or DEFAULT_KEYWORDS
+    )
+    criteria = SearchCriteria(keywords=keywords, locations=["Kraków", "Cracow"])
+    negative_terms = {
+        term.casefold() for search in configured_searches for term in search.negative_keywords
+    }
+    successful: set[str] = set()
+    try:
+
+        def fetch(source):  # noqa: ANN001, ANN202
+            provider_started = time.monotonic()
+            try:
+                return (
+                    source,
+                    source.search_jobs(criteria),
+                    None,
+                    time.monotonic() - provider_started,
+                )
+            except Exception as exc:  # provider isolation is intentional
+                return source, [], exc, time.monotonic() - provider_started
+
+        with ThreadPoolExecutor(max_workers=min(6, len(sources))) as executor:
+            futures = [executor.submit(fetch, source) for source in sources]
+            for future in as_completed(futures):
+                source, postings, error, duration = future.result()
+                provider_run = ProviderRun(
+                    search_run=search_run,
+                    provider=source.name,
+                    status="failed" if error else "success",
+                    duration=round(duration, 3),
+                    jobs_found=len(postings),
+                    error_message=str(error)[:1000] if error else None,
+                )
+                session.add(provider_run)
+                if error:
+                    logger.error("Provider %s failed: %s", source.name, error)
+                    search_run.errors += 1
+                    session.commit()
+                    continue
+                provider_run.jobs_found = len(postings)
+                successful.add(source.name)
+                search_run.jobs_found += len(postings)
+                for posting in postings:
+                    if is_senior_role(posting.title):
+                        continue
+                    if not relevant_to_krakow(
+                        posting.location,
+                        posting.description,
+                        posting.remote_type == "Remote",
+                    ):
+                        continue
+                    job, outcome = import_posting(session, posting, profile)
+                    posting_text = f"{posting.title} {posting.description}".casefold()
+                    if any(term in posting_text for term in negative_terms):
+                        job.ignored = True
+                    if outcome == "new":
+                        search_run.new_jobs += 1
+                    else:
+                        search_run.updated_jobs += 1
+                        search_run.duplicates_found += 1
+                session.commit()
+
+        # Preserve history. A job becomes expired only after a successful source check and
+        # seven days without being seen; one empty response cannot hide it immediately.
+        cutoff = utcnow() - timedelta(days=7)
+        if successful:
+            session.execute(
+                Job.__table__.update()
+                .where(Job.source.in_(successful), Job.last_seen < cutoff, Job.is_demo.is_(False))
+                .values(is_active=False)
+            )
+        search_run.status = "completed" if not search_run.errors else "completed_with_errors"
+    except Exception:
+        search_run.status = "failed"
+        search_run.errors += 1
+        logger.exception("Search run failed")
+    finally:
+        search_run.sources_checked = len(sources)
+        search_run.completed_at = datetime.now().replace(microsecond=0)
+        search_run.duration = round(time.monotonic() - started, 3)
+        session.commit()
+    return search_run
