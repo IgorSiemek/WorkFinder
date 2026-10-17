@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from app.models import CandidateProfile, Job
+from app.scrapers.common import is_internship_role
 
 SKILL_ALIASES: dict[str, tuple[str, ...]] = {
     "Excel": ("excel", "spreadsheets"),
@@ -85,8 +86,9 @@ def score_job(job: Job, profile: CandidateProfile | None = None) -> MatchResult:
         score += points
         explanation.append({"label": label, "points": points})
 
+    if is_internship_role(job.title, job.employment_type, job.seniority):
+        add("Internship or trainee level", 20)
     positive = [
-        (("intern", "internship", "staż", "praktyk"), "Internship or trainee level", 20),
         (("junior", "entry level", "graduate", "młodszy"), "Entry-level seniority", 14),
         (("financial analysis", "finance", "fp&a", "controlling"), "Finance focus", 12),
         (("analyst", "analysis", "analityk", "analitycz"), "Analytical work", 12),

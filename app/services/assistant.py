@@ -19,7 +19,10 @@ class ApplicationAssistant:
     """Deterministic analysis with the same interface a future LLM adapter can implement."""
 
     def analyze_job(self, job: Job, profile: CandidateProfile | None) -> ApplicationAnalysis:
-        have = {item.casefold() for item in (profile.skills + profile.technologies) if profile}
+        have = {
+            item.casefold()
+            for item in ((profile.skills + profile.technologies) if profile else [])
+        }
         strengths = [skill for skill in job.skills if skill.casefold() in have]
         gaps = [skill for skill in job.skills if skill.casefold() not in have]
         categories = ", ".join(job.categories[:2]).lower()

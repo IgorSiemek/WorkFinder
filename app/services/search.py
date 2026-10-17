@@ -3,7 +3,7 @@ from __future__ import annotations
 import logging
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from datetime import datetime, timedelta
+from datetime import timedelta
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -14,16 +14,19 @@ from app.models import (
     JobOccurrence,
     ProviderRun,
     SavedSearch,
+    SearchObservation,
     SearchRun,
     utcnow,
 )
 from app.scrapers.base import JobPosting, SearchCriteria
-from app.scrapers.common import is_senior_role, relevant_to_krakow
+from app.scrapers.common import INTERNSHIP_KEYWORDS, is_internship_role, relevant_to_krakow
 from app.scrapers.registry import enabled_sources
+from app.services.backups import automatic_backup
 from app.services.deduplication import find_duplicate
 from app.services.ignoring import apply_ignore_rules
 from app.services.matching import score_job
 from app.services.normalization import canonicalize_url, job_hash
+from app.services.publication_dates import refresh_posting_dates, save_date_evidence
 
 logger = logging.getLogger(__name__)
 
@@ -117,6 +120,14 @@ def import_posting(
     if duplicate:
         duplicate.last_seen = utcnow()
         duplicate.is_active = True
+        if posting.date_posted is not None:
+            duplicate.date_posted = (
+                min(duplicate.date_posted, posting.date_posted)
+                if duplicate.date_posted
+                else posting.date_posted
+            )
+        if evidence := posting.raw_payload.get("_publication_check"):
+            save_date_evidence(duplicate, evidence)
         if len(posting.description) > len(duplicate.description):
             duplicate.description = posting.description
         _add_occurrence(session, duplicate, posting)
@@ -140,7 +151,7 @@ def run_search(session: Session) -> SearchRun:
     started = time.monotonic()
     search_run = SearchRun()
     session.add(search_run)
-    session.flush()
+    session.commit()
     profile = session.scalar(select(CandidateProfile).limit(1))
     sources = enabled_sources()
     configured_searches = session.scalars(
@@ -150,10 +161,14 @@ def run_search(session: Session) -> SearchRun:
         sorted({keyword for search in configured_searches for keyword in search.keywords})
         or DEFAULT_KEYWORDS
     )
-    criteria = SearchCriteria(keywords=keywords, locations=["Kraków", "Cracow"])
+    criteria = SearchCriteria(
+        keywords=sorted(set(keywords) | set(INTERNSHIP_KEYWORDS)),
+        locations=["Kraków", "Cracow"],
+    )
     negative_terms = {
         term.casefold() for search in configured_searches for term in search.negative_keywords
     }
+    session.commit()  # Do not hold a database write transaction during network requests.
     successful: set[str] = set()
     try:
 
@@ -169,7 +184,7 @@ def run_search(session: Session) -> SearchRun:
             except Exception as exc:  # provider isolation is intentional
                 return source, [], exc, time.monotonic() - provider_started
 
-        with ThreadPoolExecutor(max_workers=min(6, len(sources))) as executor:
+        with ThreadPoolExecutor(max_workers=max(1, min(6, len(sources)))) as executor:
             futures = [executor.submit(fetch, source) for source in sources]
             for future in as_completed(futures):
                 source, postings, error, duration = future.result()
@@ -188,21 +203,53 @@ def run_search(session: Session) -> SearchRun:
                     session.commit()
                     continue
                 provider_run.jobs_found = len(postings)
-                successful.add(source.name)
-                search_run.jobs_found += len(postings)
+                if getattr(source, "can_confirm_absence", False):
+                    successful.add(source.name)
+                elif not postings:
+                    provider_run.status = "unverified"
+                    provider_run.error_message = (
+                        "No parseable matches; this monitor cannot confirm that old offers expired"
+                    )
                 for posting in postings:
-                    if is_senior_role(posting.title):
+                    observation = SearchObservation(
+                        search_run_id=search_run.id,
+                        provider=source.name,
+                        title=posting.title[:300],
+                        company=posting.company[:200],
+                        outcome="excluded_role",
+                        detail="Outside internship scope",
+                    )
+                    session.add(observation)
+                    if not is_internship_role(
+                        posting.title, posting.employment_type, posting.seniority
+                    ):
                         continue
                     if not relevant_to_krakow(
                         posting.location,
                         posting.description,
                         posting.remote_type == "Remote",
                     ):
+                        observation.outcome = "excluded_location"
+                        observation.detail = "Outside Kraków or remote-only"
                         continue
-                    job, outcome = import_posting(session, posting, profile)
+                    try:
+                        with session.begin_nested():
+                            job, outcome = import_posting(session, posting, profile)
+                    except Exception as exc:  # isolate a malformed posting, retain run history
+                        observation.outcome = "error"
+                        observation.detail = str(exc)[:1000]
+                        search_run.errors += 1
+                        logger.exception("Could not import %s posting", source.name)
+                        continue
+                    search_run.jobs_found += 1
+                    observation.job_id = job.id
+                    observation.outcome = outcome
+                    observation.detail = "First discovery" if outcome == "new" else "Seen again"
                     posting_text = f"{posting.title} {posting.description}".casefold()
                     if any(term in posting_text for term in negative_terms):
                         job.ignored = True
+                    if job.ignored:
+                        observation.detail += "; hidden by an ignore rule or negative keyword"
                     if outcome == "new":
                         search_run.new_jobs += 1
                     else:
@@ -211,22 +258,34 @@ def run_search(session: Session) -> SearchRun:
                 session.commit()
 
         # Preserve history. A job becomes expired only after a successful source check and
-        # seven days without being seen; one empty response cannot hide it immediately.
+        # seven days without being seen, and only a complete structured scan may expire it.
         cutoff = utcnow() - timedelta(days=7)
         if successful:
             session.execute(
                 Job.__table__.update()
-                .where(Job.source.in_(successful), Job.last_seen < cutoff, Job.is_demo.is_(False))
+                .where(
+                    Job.is_internship,
+                    Job.source.in_(successful),
+                    Job.last_seen < cutoff,
+                    Job.is_demo.is_(False),
+                )
                 .values(is_active=False)
             )
         search_run.status = "completed" if not search_run.errors else "completed_with_errors"
     except Exception:
+        session.rollback()
         search_run.status = "failed"
         search_run.errors += 1
         logger.exception("Search run failed")
     finally:
         search_run.sources_checked = len(sources)
-        search_run.completed_at = datetime.now().replace(microsecond=0)
+        search_run.completed_at = utcnow().replace(microsecond=0)
         search_run.duration = round(time.monotonic() - started, 3)
         session.commit()
+        try:
+            refresh_posting_dates(session)
+        except Exception:
+            session.rollback()
+            logger.exception("Missing-date enrichment failed; search results were already saved")
+        automatic_backup(session.get_bind())
     return search_run

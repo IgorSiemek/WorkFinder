@@ -9,7 +9,7 @@ from sqlalchemy.orm import Session
 from app.database import get_session
 from app.main import app
 from app.models import Application, Job
-from app.routes import actions
+from app.services import progress
 
 
 def _job(title: str, age_days: int) -> Job:
@@ -23,14 +23,13 @@ def _job(title: str, age_days: int) -> Job:
         company="Example",
         location="Kraków",
         description="Finance internship",
+        employment_type="Internship",
         job_hash=slug,
         date_discovered=datetime.now() - timedelta(days=age_days),
     )
 
 
-def test_new_jobs_hide_applied_and_support_day_window(
-    session: Session, monkeypatch
-) -> None:  # noqa: ANN001
+def test_new_jobs_hide_applied_and_support_day_window(session: Session, monkeypatch) -> None:  # noqa: ANN001
     recent = _job("Recent Open Role", 1)
     applied = _job("Recent Applied Role", 1)
     ignore_from_new = _job("Ignore From New", 1)
@@ -77,7 +76,8 @@ def test_new_jobs_hide_applied_and_support_day_window(
             calls.append((path, job.id, applied_on))
             return SimpleNamespace(created=False, row_number=4)
 
-        monkeypatch.setattr(actions, "mark_applied_in_excel", fake_excel_sync)
+        monkeypatch.setattr(progress, "mark_applied_in_excel", fake_excel_sync)
+        monkeypatch.setattr(progress, "settings", SimpleNamespace(excel_jobs_path="test.xlsx"))
         marked = client.post(
             f"/actions/jobs/{recent.id}/mark-applied",
             data={"return_to": "/jobs?view=new"},

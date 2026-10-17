@@ -12,6 +12,7 @@ from app.config import PROJECT_ROOT, settings
 from app.database import SessionLocal, init_database
 from app.models import Job
 from app.routes import actions, pages
+from app.services.backups import automatic_backup
 from app.services.seed import seed_defaults, seed_demo
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
@@ -19,6 +20,7 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name
 
 @asynccontextmanager
 async def lifespan(_: FastAPI):
+    automatic_backup()
     init_database()
     with SessionLocal() as session:
         seed_defaults(session)

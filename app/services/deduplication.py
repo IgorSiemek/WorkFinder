@@ -32,6 +32,9 @@ def postings_match(left: JobPosting | Job, right: JobPosting | Job) -> bool:
             return True
     except ValueError:
         pass
+    # Different requisitions from one provider remain separate even with similar titles.
+    if left.source == right.source and left_source_id and right_source_id:
+        return False
     if normalize_company(left.company) != normalize_company(right.company):
         return False
     if normalize_location(left.location) != normalize_location(right.location):
@@ -66,7 +69,12 @@ def find_duplicate(session: Session, posting: JobPosting) -> Job | None:
             [
                 (Job.source == posting.source) & (Job.source_job_id == posting.source_job_id),
                 (JobOccurrence.source == posting.source)
-                & (JobOccurrence.source_job_id == posting.source_job_id),
+                & (JobOccurrence.source_job_id == posting.source_job_id)
+                & (
+                    (Job.source != posting.source)
+                    | Job.source_job_id.is_(None)
+                    | (Job.source_job_id == posting.source_job_id)
+                ),
             ]
         )
     direct = session.scalar(

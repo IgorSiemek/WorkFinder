@@ -39,6 +39,7 @@ class JobSource(ABC):
     name: str
     description: str
     enabled: bool = True
+    can_confirm_absence: bool = False
 
     @abstractmethod
     def search_jobs(self, criteria: SearchCriteria) -> list[JobPosting]:

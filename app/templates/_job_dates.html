@@ -1,0 +1,6 @@
+<div class="job-dates">
+  {% set date_info = job.raw_payload.get('_publication_check', {}) %}
+  <span>{% if job.date_posted %}{{ 'Source posted' if date_info.get('method') == 'Job board created_at' else 'Employer posted' }} <time datetime="{{ job.date_posted.isoformat() }}">{{ job.date_posted.strftime('%d %b %Y') }}</time>{% elif date_info.get('estimated_date') %}Estimated posting date: {{ date_info.estimated_date }}{% elif date_info.get('status') == 'relative' %}Source reports: {{ date_info.evidence }}{% else %}Employer posting date unavailable{% endif %}</span>
+  <span>Found by WorkFinder <time datetime="{{ job.date_discovered.date().isoformat() }}">{{ job.date_discovered.strftime('%d %b %Y') }}</time></span>
+  {% if date_info.get('checked_on') %}<small title="{{ date_info.get('method', '') }}{% if date_info.get('evidence') %}: {{ date_info.evidence }}{% endif %}">{{ 'Date verified' if date_info.get('status') == 'verified' else 'Date lookup' }} {{ date_info.checked_on }}</small>{% endif %}
+</div>

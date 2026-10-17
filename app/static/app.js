@@ -32,7 +32,14 @@ document.querySelectorAll('.kanban-drop').forEach((zone) => {
     zone.appendChild(dragged);
     const form = new FormData();
     form.append('status', statusMap[zone.dataset.status]);
-    await fetch(`/actions/applications/${dragged.dataset.id}/status`, { method: 'POST', body: form });
-    window.location.reload();
+    try {
+      const response = await fetch(`/actions/applications/${dragged.dataset.id}/status`, {
+        method: 'POST', body: form
+      });
+      if (!response.ok) throw new Error('Could not save application status');
+      window.location.assign(response.url);
+    } catch {
+      window.location.reload();
+    }
   });
 });

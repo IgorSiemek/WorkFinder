@@ -35,6 +35,24 @@ def _company_sources() -> list[JobSource]:
                 site="APTIV_CAREERS",
             )
         ),
+        WorkdaySource(
+            WorkdayConfig(
+                name="State Street Careers",
+                company="State Street",
+                host="statestreet.wd1.myworkdayjobs.com",
+                tenant="statestreet",
+                site="Global",
+            )
+        ),
+        WorkdaySource(
+            WorkdayConfig(
+                name="Motorola Solutions Careers",
+                company="Motorola Solutions",
+                host="motorolasolutions.wd5.myworkdayjobs.com",
+                tenant="motorolasolutions",
+                site="Careers",
+            )
+        ),
     ]
     pages = [
         CareerPageConfig(
@@ -98,6 +116,23 @@ def _company_sources() -> list[JobSource]:
 
 def enabled_sources() -> list[JobSource]:
     return [ArbeitnowSource(), *_company_sources()]
+
+
+def company_career_pages() -> dict[str, dict[str, str]]:
+    pages = {
+        "Shell": {"url": "https://shell.wd3.myworkdayjobs.com/Proactive", "mode": "Manual"},
+        "ABB": {"url": "https://careers.abb/global/en/early-careers", "mode": "Manual"},
+        "Aon": {"url": "https://jobs.aon.com/", "mode": "Manual"},
+    }
+    for source in _company_sources():
+        config = source.config
+        url = (
+            config.url
+            if isinstance(source, CareerPageSource)
+            else (f"https://{config.host}/en-US/{config.site}")
+        )
+        pages[config.company] = {"url": url, "mode": "Automatic"}
+    return pages
 
 
 def provider_catalog() -> list[ProviderInfo]:

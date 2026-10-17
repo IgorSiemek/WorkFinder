@@ -96,11 +96,6 @@ def _parse_date(value: Any) -> date | None:
     return None
 
 
-def _valid_past_date(value: Any) -> date | None:
-    parsed = _parse_date(value)
-    return parsed if parsed and parsed <= date.today() else None
-
-
 def _employment_type(value: Any) -> str:
     if isinstance(value, (date, datetime)):
         return f"{value.month}/{value.day} etatu"
@@ -245,7 +240,6 @@ def import_excel_jobs(session: Session, workbook_path: str | Path) -> ExcelImpor
                 location="Kraków",
                 employment_type=_employment_type(row.get("employment_type")),
                 description=description,
-                date_posted=_valid_past_date(row.get("date_added")),
                 raw_payload=raw_payload,
             )
             try:
@@ -261,9 +255,6 @@ def import_excel_jobs(session: Session, workbook_path: str | Path) -> ExcelImpor
                 result.updated_jobs += 1
             if posting.employment_type != "Not specified":
                 job.employment_type = posting.employment_type
-            if posting.date_posted and job.date_posted is None:
-                job.date_posted = posting.date_posted
-
             job_notes = []
             referral = _text(row.get("referral"))
             status = _text(row.get("status"))
@@ -272,7 +263,7 @@ def import_excel_jobs(session: Session, workbook_path: str | Path) -> ExcelImpor
                 job_notes.append(f"Excel referral: {referral}")
             if status:
                 job_notes.append(f"Excel status: {status}")
-            if raw_added_date and posting.date_posted is None:
+            if raw_added_date:
                 job_notes.append(f"Excel date added: {raw_added_date} (preserved as entered)")
             job.notes = _append_notes(job.notes, job_notes)
             _import_application(session, job, row, result)

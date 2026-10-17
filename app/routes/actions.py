@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import sqlite3
 from datetime import date
+from urllib.parse import urlencode
 
 from fastapi import APIRouter, Depends, Form
 from fastapi.responses import RedirectResponse
@@ -11,22 +13,22 @@ from app.config import settings
 from app.database import get_session
 from app.models import (
     Application,
-    ApplicationActivity,
     CandidateProfile,
     CompanyPreference,
     CvVersion,
     IgnoreRule,
     Job,
     SavedSearch,
-    utcnow,
 )
 from app.scrapers.base import JobPosting
-from app.scrapers.common import is_senior_role
+from app.scrapers.common import is_internship_role
+from app.services.backups import backup_database
 from app.services.excel_import import import_excel_jobs
-from app.services.excel_sync import mark_applied_in_excel
 from app.services.ignoring import recalculate_rule_ignores
 from app.services.matching import score_job
 from app.services.normalization import canonicalize_url
+from app.services.progress import change_status, retry_excel_sync, save_progress, update_details
+from app.services.publication_dates import refresh_posting_dates
 from app.services.search import import_posting, run_search
 from app.services.seed import remove_demo, seed_demo
 
@@ -35,23 +37,59 @@ router = APIRouter(prefix="/actions")
 
 def redirect(path: str, message: str = "Updated") -> RedirectResponse:
     separator = "&" if "?" in path else "?"
-    return RedirectResponse(f"{path}{separator}message={message}", status_code=303)
+    return RedirectResponse(f"{path}{separator}{urlencode({'message': message})}", status_code=303)
 
 
 def _safe_return_path(value: str, fallback: str) -> str:
     return value if value.startswith("/") and not value.startswith("//") else fallback
 
 
-def _excel_error(exc: OSError | ValueError) -> str:
-    if isinstance(exc, PermissionError):
-        return "Close the Excel workbook and try again"
-    return str(exc)
+@router.post("/database/backup")
+def create_backup(session: Session = Depends(get_session)) -> RedirectResponse:
+    try:
+        path = backup_database(session.get_bind(), force=True)
+    except (OSError, sqlite3.Error) as exc:
+        return redirect("/settings", f"Backup failed: {exc}")
+    return redirect("/settings", f"Backup created: {path.name}" if path else "No file database")
+
+
+@router.post("/excel/retry")
+def retry_excel(session: Session = Depends(get_session)) -> RedirectResponse:
+    done, pending = retry_excel_sync(session)
+    return redirect("/settings", f"Excel sync: {done} completed, {pending} pending")
 
 
 @router.post("/search")
 def search_now(session: Session = Depends(get_session)) -> RedirectResponse:
     result = run_search(session)
     return redirect("/", f"Search complete: {result.new_jobs} new jobs")
+
+
+@router.post("/dates/refresh")
+def refresh_dates(session: Session = Depends(get_session)) -> RedirectResponse:
+    counts = refresh_posting_dates(session, force=True)
+    return redirect(
+        "/settings",
+        (
+            f"Posting dates checked: {counts['verified']} verified, "
+            f"{counts['relative']} estimated, {counts['unknown']} unavailable"
+        ),
+    )
+
+
+@router.post("/jobs/{job_id}/posting-date")
+def refresh_job_date(job_id: int, session: Session = Depends(get_session)) -> RedirectResponse:
+    counts = refresh_posting_dates(session, job_id=job_id, force=True)
+    return redirect(
+        f"/jobs/{job_id}",
+        "Posting date verified"
+        if counts["verified"]
+        else (
+            "Source provides only a relative posting date"
+            if counts["relative"]
+            else "Could not verify a posting date on the public source page"
+        ),
+    )
 
 
 @router.post("/excel/import")
@@ -75,11 +113,8 @@ def excel_import(session: Session = Depends(get_session)) -> RedirectResponse:
 def save_job(job_id: int, session: Session = Depends(get_session)) -> RedirectResponse:
     job = session.get(Job, job_id)
     if job and not job.application:
-        app = Application(job=job, status="Saved")
-        session.add(app)
-        session.flush()
-        session.add(ApplicationActivity(application=app, event_type="status", description="Saved"))
-        session.commit()
+        application = change_status(session, job, "Saved")
+        save_progress(session, application)
     return redirect(f"/jobs/{job_id}", "Job saved")
 
 
@@ -97,42 +132,8 @@ def mark_job_applied(
         return redirect(target, "Only active Kraków jobs can be marked as applied")
     if job.application and job.application.status not in {"Saved", "Preparing"}:
         return redirect(target, f"Job is already {job.application.status}")
-    if not settings.excel_jobs_path:
-        return redirect(target, "Set EXCEL_JOBS_PATH in .env first")
-
-    applied_at = utcnow()
-    try:
-        excel_result = mark_applied_in_excel(
-            settings.excel_jobs_path, job, applied_at.date()
-        )
-    except (OSError, ValueError) as exc:
-        return redirect(target, _excel_error(exc))
-
-    application = job.application or Application(job=job, status="Applied")
-    if application.id is None:
-        session.add(application)
-        session.flush()
-    application.status = "Applied"
-    application.date_applied = applied_at
-    application.last_activity = applied_at
-    application.application_url = job.original_url
-    session.add(
-        ApplicationActivity(
-            application=application,
-            event_type="status",
-            description=(
-                "Marked as Applied; added to Excel"
-                if excel_result.created
-                else "Marked as Applied; Excel row updated"
-            ),
-        )
-    )
-    session.commit()
-    action = "added to" if excel_result.created else "updated in"
-    return redirect(
-        target,
-        f"Marked Applied and {action} Excel row {excel_result.row_number}",
-    )
+    application = change_status(session, job, "Applied")
+    return redirect(target, save_progress(session, application))
 
 
 @router.post("/jobs/{job_id}/ignore")
@@ -158,65 +159,22 @@ def update_application(
     cv_version: str = Form(""),
     session: Session = Depends(get_session),
 ) -> RedirectResponse:
-    allowed = {
-        "Saved",
-        "Preparing",
-        "Applied",
-        "Recruiter Screen",
-        "Technical/Case Interview",
-        "Hiring Manager Interview",
-        "Final Interview",
-        "Offer",
-        "Rejected",
-        "Withdrawn",
-        "Expired",
-    }
-    if status not in allowed:
-        return redirect(f"/jobs/{job_id}", "Invalid status")
     job = session.get(Job, job_id)
     if job is None:
         return redirect("/jobs", "Job not found")
-    application = job.application or Application(job=job, status="Saved")
-    if application.id is None:
-        session.add(application)
-        session.flush()
-    old_status = application.status
-    if status == "Applied" and old_status != "Applied":
-        if not settings.excel_jobs_path:
-            session.rollback()
-            return redirect(f"/jobs/{job_id}", "Set EXCEL_JOBS_PATH in .env first")
-        try:
-            mark_applied_in_excel(settings.excel_jobs_path, job, date.today())
-        except (OSError, ValueError) as exc:
-            session.rollback()
-            return redirect(f"/jobs/{job_id}", _excel_error(exc))
-    application.status = status
-    application.notes = notes
-    application.cv_version = cv_version or None
-    application.next_action_date = (
-        date.fromisoformat(next_action_date) if next_action_date else None
+    try:
+        next_date = date.fromisoformat(next_action_date) if next_action_date else None
+        was_applied = bool(job.application and job.application.date_applied)
+        application = change_status(session, job, status)
+    except ValueError:
+        return redirect(f"/jobs/{job_id}", "Invalid status or next action date")
+    # Keep the initial suggested follow-up if the application form had no date yet.
+    if status == "Applied" and not was_applied and not next_action_date:
+        next_date = application.next_action_date
+    update_details(
+        session, application, notes=notes, cv_version=cv_version, next_action_date=next_date
     )
-    application.last_activity = utcnow()
-    if status == "Applied" and application.date_applied is None:
-        application.date_applied = utcnow()
-    if status == "Offer":
-        application.offer_date = date.today()
-    if status == "Rejected":
-        application.rejection_date = date.today()
-    if old_status != status:
-        session.add(
-            ApplicationActivity(
-                application=application,
-                event_type="status",
-                description=f"Status changed from {old_status} to {status}",
-            )
-        )
-    if notes:
-        session.add(
-            ApplicationActivity(application=application, event_type="note", description=notes)
-        )
-    session.commit()
-    return redirect(f"/jobs/{job_id}", "Application updated")
+    return redirect(f"/jobs/{job_id}", save_progress(session, application))
 
 
 @router.post("/applications/{application_id}/status")
@@ -226,30 +184,13 @@ def kanban_status(
     session: Session = Depends(get_session),
 ) -> RedirectResponse:
     application = session.get(Application, application_id)
-    if application:
-        old = application.status
-        if status == "Applied" and old != "Applied":
-            if not settings.excel_jobs_path:
-                return redirect("/applications", "Set EXCEL_JOBS_PATH in .env first")
-            try:
-                mark_applied_in_excel(
-                    settings.excel_jobs_path, application.job, date.today()
-                )
-            except (OSError, ValueError) as exc:
-                return redirect("/applications", _excel_error(exc))
-        application.status = status
-        application.last_activity = utcnow()
-        if status == "Applied" and application.date_applied is None:
-            application.date_applied = utcnow()
-        session.add(
-            ApplicationActivity(
-                application=application,
-                event_type="status",
-                description=f"Status changed from {old} to {status}",
-            )
-        )
-        session.commit()
-    return redirect("/applications", "Status updated")
+    if application is None:
+        return redirect("/applications", "Application not found")
+    try:
+        change_status(session, application.job, status)
+    except ValueError:
+        return redirect("/applications", "Invalid application status")
+    return redirect("/applications", save_progress(session, application))
 
 
 def _csv(value: str) -> list[str]:
@@ -380,8 +321,8 @@ def manual_job(
     description: str = Form(""),
     session: Session = Depends(get_session),
 ) -> RedirectResponse:
-    if is_senior_role(title):
-        return redirect("/jobs/new/manual", "Senior-level roles are excluded")
+    if not is_internship_role(title, employment_type):
+        return redirect("/jobs/new/manual", "Add an internship, traineeship or student placement")
     if remote_type not in {"On-site", "Hybrid"}:
         remote_type = "On-site"
     try:

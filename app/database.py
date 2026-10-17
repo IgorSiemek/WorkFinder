@@ -29,7 +29,9 @@ if database_url.startswith("sqlite:///"):
 
 engine = create_engine(
     database_url,
-    connect_args={"check_same_thread": False} if database_url.startswith("sqlite") else {},
+    connect_args={"check_same_thread": False, "timeout": 30}
+    if database_url.startswith("sqlite")
+    else {},
 )
 SessionLocal = sessionmaker(bind=engine, autoflush=False, expire_on_commit=False)
 
@@ -39,6 +41,8 @@ def _enable_sqlite_foreign_keys(dbapi_connection: object, _: object) -> None:
     if database_url.startswith("sqlite"):
         cursor = dbapi_connection.cursor()  # type: ignore[attr-defined]
         cursor.execute("PRAGMA foreign_keys=ON")
+        cursor.execute("PRAGMA busy_timeout=30000")
+        cursor.execute("PRAGMA synchronous=FULL")
         cursor.close()
 
 
@@ -48,6 +52,13 @@ def get_session() -> Generator[Session, None, None]:
 
 
 def init_database() -> None:
-    from app import models  # noqa: F401
+    from alembic.config import Config
 
-    Base.metadata.create_all(engine)
+    from alembic import command
+
+    config = Config(str(PROJECT_ROOT / "alembic.ini"))
+    config.set_main_option("script_location", str(PROJECT_ROOT / "alembic"))
+    config.set_main_option("sqlalchemy.url", database_url.replace("%", "%%"))
+    with engine.begin() as connection:
+        config.attributes["connection"] = connection
+        command.upgrade(config, "head")

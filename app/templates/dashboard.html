@@ -3,13 +3,15 @@
 {% block breadcrumb %}Dashboard{% endblock %}
 {% block content %}
 <section class="page-heading heading-row">
-  <div><p class="eyebrow">{{ today_label }}</p><h1>Your Kraków job search</h1><p>See what changed and focus on the strongest opportunities.</p></div>
+  <div><p class="eyebrow">YOUR NEXT CHAPTER</p><h1>Your Kraków internship search</h1><p>See what changed and focus on the strongest opportunities.</p></div>
   {% if latest_run %}<div class="last-sync"><span class="live-dot"></span>Last search {{ latest_run.started_at.strftime('%d %b, %H:%M') }}<small>{{ latest_run.sources_checked }} sources · {{ latest_run.duration or 0 }}s</small></div>{% endif %}
 </section>
 
+{% include "_internship_scope.html" %}
+
 <section class="metrics-grid">
-  <a href="/jobs?view=new" class="metric accent"><span class="metric-icon">✦</span><div><small>New today</small><strong>{{ new_today }}</strong><em>{{ new_week }} this week</em></div></a>
-  <a href="/jobs" class="metric"><span class="metric-icon violet">▤</span><div><small>Active jobs</small><strong>{{ active_jobs }}</strong><em>in Kraków only</em></div></a>
+  <a href="/jobs?view=new&amp;days=1" class="metric accent" title="First found by WorkFinder today, regardless of the employer's posting date."><span class="metric-icon">✦</span><div><small>Found today</small><strong>{{ new_today }}</strong><em>{{ new_week }} found this week</em></div></a>
+  <a href="/jobs" class="metric"><span class="metric-icon violet">▤</span><div><small>Active internships</small><strong>{{ active_jobs }}</strong><em>in Kraków only</em></div></a>
   <a href="/applications" class="metric"><span class="metric-icon amber">◫</span><div><small>Applications</small><strong>{{ applications_count }}</strong><em>in your pipeline</em></div></a>
   <a href="/applications" class="metric"><span class="metric-icon rose">◎</span><div><small>Interviews</small><strong>{{ interviews }}</strong><em>active conversations</em></div></a>
 </section>
@@ -20,7 +22,7 @@
 
 <div class="dashboard-grid">
   <section>
-    <div class="section-heading"><div><h2>Best recent matches</h2><p>Active roles ranked by transparent matching rules.</p></div><a href="/jobs?view=new">View all →</a></div>
+    <div class="section-heading"><div><h2>Recent internship matches</h2><p>Internships and training programmes selected for your next step.</p></div><a href="/jobs?view=new">View all →</a></div>
     <div class="job-grid compact">
       {% for job in recent_jobs %}{% include "_job_card.html" %}
       {% else %}<div class="empty-state"><span>⌕</span><h3>No jobs yet</h3><p>Run a search or add a job manually.</p></div>{% endfor %}

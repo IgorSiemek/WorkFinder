@@ -3,11 +3,11 @@
     <div class="company-logo">{{ job.company[:2] | upper }}</div>
     <div class="job-main">
       <div class="job-kicker">
-        {% set age = (job.date_discovered.date() - job.date_discovered.date()).days %}
         {% if job.is_demo %}<span class="badge demo">DEMO</span>{% endif %}
+        {% if job.internship_label %}<span class="badge internship">{{ job.internship_label | upper }}</span>{% endif %}
         {% if not job.is_active %}<span class="badge muted">EXPIRED</span>
         {% elif job.application %}<span class="badge status">{{ job.application.status | upper }}</span>
-        {% elif job.date_discovered.date() == job.date_discovered.today().date() %}<span class="badge new">NEW TODAY</span>
+        {% elif job.date_discovered.date() == job.date_discovered.today().date() %}<span class="badge new" title="First found by WorkFinder today. The employer may have posted it earlier.">FOUND TODAY</span>
         {% endif %}
       </div>
       <a href="/jobs/{{ job.id }}" class="job-title">{{ job.title }}</a>
@@ -24,8 +24,8 @@
   <div class="chip-row">
     {% for skill in job.skills[:4] %}<span class="chip">{{ skill }}</span>{% endfor %}
   </div>
+  {% include "_job_dates.html" %}
   <div class="job-card-footer">
-    <span class="subtle">Found {{ job.date_discovered.strftime('%d %b') }}</span>
     <div class="card-actions">
       {% if not job.application %}
       <form action="/actions/jobs/{{ job.id }}/save" method="post"><button class="icon-button" title="Save">♡</button></form>

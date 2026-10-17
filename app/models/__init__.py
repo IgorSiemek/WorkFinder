@@ -4,9 +4,11 @@ from datetime import UTC, date, datetime
 from typing import Any
 
 from sqlalchemy import JSON, Boolean, Date, DateTime, Float, ForeignKey, Integer, String, Text
+from sqlalchemy.ext.hybrid import hybrid_property
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.database import Base
+from app.scrapers.common import INTERNSHIP_PATTERN, SENIOR_TITLE_PATTERN, internship_label
 
 
 def utcnow() -> datetime:
@@ -62,6 +64,25 @@ class Job(Base, TimestampMixin):
     application: Mapped[Application | None] = relationship(
         back_populates="job", cascade="all, delete-orphan", uselist=False
     )
+
+    @property
+    def internship_label(self) -> str | None:
+        return internship_label(self.title, self.employment_type, self.seniority)
+
+    @hybrid_property
+    def is_internship(self) -> bool:
+        return self.internship_label is not None
+
+    @is_internship.inplace.expression
+    @classmethod
+    def _is_internship_expression(cls):  # noqa: ANN202
+        # SQLite's SQLAlchemy REGEXP uses Python re, including Unicode word boundaries.
+        pattern = f"(?i){INTERNSHIP_PATTERN}"
+        return ~cls.title.regexp_match(f"(?i){SENIOR_TITLE_PATTERN.pattern}") & (
+            cls.title.regexp_match(pattern)
+            | cls.employment_type.regexp_match(pattern)
+            | cls.seniority.regexp_match(pattern)
+        )
 
 
 class JobOccurrence(Base):
@@ -159,6 +180,41 @@ class ApplicationActivity(Base):
     description: Mapped[str] = mapped_column(Text)
 
     application: Mapped[Application] = relationship(back_populates="activities")
+
+
+class ExcelSyncTask(Base):
+    __tablename__ = "excel_sync_tasks"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    application_id: Mapped[int] = mapped_column(
+        ForeignKey("applications.id", ondelete="CASCADE"), unique=True, index=True
+    )
+    workbook_path: Mapped[str] = mapped_column(Text)
+    applied_on: Mapped[date] = mapped_column(Date)
+    status: Mapped[str] = mapped_column(String(30), default="pending", index=True)
+    attempts: Mapped[int] = mapped_column(Integer, default=0)
+    error_message: Mapped[str | None] = mapped_column(Text)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, onupdate=utcnow)
+    application: Mapped[Application] = relationship()
+
+
+class SearchObservation(Base):
+    __tablename__ = "search_observations"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    search_run_id: Mapped[int] = mapped_column(
+        ForeignKey("search_runs.id", ondelete="CASCADE"), index=True
+    )
+    job_id: Mapped[int | None] = mapped_column(
+        ForeignKey("jobs.id", ondelete="SET NULL"), index=True
+    )
+    provider: Mapped[str] = mapped_column(String(100))
+    title: Mapped[str] = mapped_column(String(300))
+    company: Mapped[str] = mapped_column(String(200))
+    outcome: Mapped[str] = mapped_column(String(40), index=True)
+    detail: Mapped[str] = mapped_column(Text, default="")
+    observed_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+    job: Mapped[Job | None] = relationship()
 
 
 class CandidateProfile(Base, TimestampMixin):

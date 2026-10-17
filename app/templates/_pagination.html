@@ -1,0 +1,1 @@
+{% if pages > 1 %}<nav class="pagination"><a class="{% if page == 1 %}disabled{% endif %}" href="{{ request.url.include_query_params(page=page-1) }}">← Previous</a><span>Page {{ page }} of {{ pages }}</span><a class="{% if page == pages %}disabled{% endif %}" href="{{ request.url.include_query_params(page=page+1) }}">Next →</a></nav>{% endif %}

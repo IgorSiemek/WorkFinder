@@ -9,14 +9,15 @@
 <body>
   <aside class="sidebar" id="sidebar">
     <a class="brand" href="/"><span class="brand-mark">W</span><span>WorkFinder</span></a>
-    <div class="scope"><span class="scope-dot"></span>Kraków search area</div>
+    <div class="scope"><span class="scope-dot"></span>Kraków · Internships</div>
     <nav>
       <a href="/" class="{% if request.url.path == '/' %}active{% endif %}"><span>⌂</span>Dashboard</a>
-      <a href="/jobs?view=new" class="{% if request.url.path == '/jobs' and request.query_params.get('view') == 'new' %}active{% endif %}"><span>✦</span>New jobs</a>
-      <a href="/jobs" class="{% if request.url.path == '/jobs' and request.query_params.get('view', 'all') == 'all' %}active{% endif %}"><span>▤</span>All jobs</a>
+      <a href="/jobs?view=new" class="{% if request.url.path == '/jobs' and request.query_params.get('view') == 'new' %}active{% endif %}"><span>✦</span>Recently found</a>
+      <a href="/jobs" class="{% if request.url.path == '/jobs' and request.query_params.get('view', 'all') == 'all' %}active{% endif %}"><span>▤</span>All internships</a>
       <a href="/jobs?view=saved" class="{% if request.query_params.get('view') == 'saved' %}active{% endif %}"><span>♡</span>Saved</a>
       <a href="/jobs?view=ignored" class="{% if request.query_params.get('view') == 'ignored' %}active{% endif %}"><span>⊘</span>Ignored</a>
       <a href="/applications" class="{% if request.url.path == '/applications' %}active{% endif %}"><span>◫</span>Applications</a>
+      <a href="/activity" class="{% if request.url.path == '/activity' %}active{% endif %}"><span>◷</span>Progress history</a>
       <a href="/companies" class="{% if request.url.path == '/companies' %}active{% endif %}"><span>⌂</span>Companies</a>
       <a href="/runs" class="{% if request.url.path == '/runs' %}active{% endif %}"><span>↻</span>Search runs</a>
       <div class="nav-label">Personalization</div>
@@ -34,7 +35,7 @@
       <div class="topbar-actions">
         <a class="button secondary small" href="/jobs/new/manual">＋ Add job</a>
         <form action="/actions/search" method="post" class="search-form">
-          <button class="button primary small" type="submit"><span class="button-icon">↻</span> Run search</button>
+          <button class="button primary small" type="submit"><span class="button-icon">↻</span> Find internships</button>
         </form>
       </div>
     </header>

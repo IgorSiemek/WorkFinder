@@ -55,6 +55,31 @@ h1,h2,h3 { font-family: Manrope, sans-serif; line-height: 1.2; margin-top: 0; }h
 .saved-search-list > div { display: grid; grid-template-columns: 1fr auto auto; align-items: center; gap: 10px; padding: 11px 0; border-top: 1px solid var(--line); }
 .saved-search-list p { margin: 2px 0 0; color: var(--muted); font-size: 11px; }
 .rule-list { margin-top: 14px; }
+.job-dates { display: flex; flex-direction: column; gap: 3px; margin-top: 12px; color: var(--muted); font-size: 11px; }
+.job-dates > span:first-child { color: #45594e; }
+.date-refresh { margin-top: 10px; }
+.filter-bar { grid-template-columns: repeat(auto-fit,minmax(145px,1fr)); }
+.health.unverified { background: #e69e42; }
+.progress-timeline p { margin: 9px 0; white-space: pre-wrap; overflow-wrap: anywhere; }
+.progress-timeline .text-link { display: inline-block; margin-left: 10px; }
+.progress-timeline .timeline-item { padding-bottom: 25px; }
+.follow-up-list > a { display: flex; justify-content: space-between; align-items: center; gap: 12px; padding: 13px 0; border-top: 1px solid var(--line); }
+.follow-up-list small { display: block; margin-top: 3px; color: var(--muted); }
+.storage-panel dd,.sync-errors { overflow-wrap: anywhere; }
+.sync-warning { margin: 20px 0 10px; flex-wrap: wrap; }
+.audit-counts { margin-bottom: 20px; }
+td.audit-detail { white-space: normal; min-width: 200px; overflow-wrap: anywhere; }
+.internship-scope { display: flex; align-items: center; justify-content: space-between; gap: 24px; padding: 25px 28px; margin-bottom: 24px; border: 1px solid #d1e4cc; border-radius: var(--radius); background: linear-gradient(120deg, #edf7e7, #f8fbed); }
+.scope-label { display: inline-flex; align-items: center; color: var(--green-dark); font-size: 10px; font-weight: 800; letter-spacing: .12em; }
+.scope-label .live-dot { background: var(--green); box-shadow: 0 0 0 3px #d6ebce; }
+.internship-scope h2 { font-size: 23px; margin: 9px 0 7px; letter-spacing: -.025em; }
+.internship-scope p { color: #56674e; margin: 0; max-width: 620px; }
+.scope-tags { display: flex; flex-wrap: wrap; gap: 7px; margin-top: 16px; }
+.scope-tags span { padding: 5px 9px; background: rgba(255,255,255,.8); border: 1px solid #dbe8d3; border-radius: 7px; font-size: 10px; color: #45603d; font-weight: 600; }
+.internship-scope form { margin: 0; flex-shrink: 0; }
+.badge.internship { background: #e4f2db; color: #3e632c; }
+.job-kicker { display: flex; flex-wrap: wrap; gap: 4px; }
+@media (max-width: 620px) { .internship-scope { align-items: flex-start; flex-direction: column; padding: 20px; gap: 18px; }.internship-scope h2 { font-size: 21px; }.internship-scope form,.internship-scope .button { width: 100%; } }
 .rule-list > div { display: flex; align-items: center; gap: 9px; padding: 9px 0; border-top: 1px solid var(--line); }
 @media (max-width: 1200px) { .job-grid { grid-template-columns: repeat(2,1fr); }.filter-bar { grid-template-columns: 2fr 1fr 1fr; }.filter-bar .button { grid-column: span 1; }.metrics-grid { grid-template-columns: repeat(2,1fr); }.detail-hero { grid-template-columns: auto 1fr auto; }.hero-actions { grid-column: 1/-1; justify-content: flex-start; }.kanban { grid-template-columns: repeat(6,220px); } }
 @media (max-width: 900px) { .sidebar { transform: translateX(-100%); transition: .2s; }.menu-open .sidebar { transform: none; box-shadow: 15px 0 40px rgba(0,0,0,.2); }.main { margin-left: 0; }.menu-button { display: block; }.topbar { padding: 0 18px; }.content { padding: 24px 18px; }.dashboard-grid,.detail-grid,.settings-grid,.settings-grid.wide-left { grid-template-columns: 1fr; }.sticky { position: static; }.job-grid.compact { grid-template-columns: repeat(2,1fr); }.search-form { display: none; } }

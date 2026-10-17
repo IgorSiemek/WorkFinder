@@ -9,7 +9,8 @@ import httpx
 
 from app.config import settings
 from app.scrapers.base import JobPosting, JobSource, SearchCriteria
-from app.scrapers.common import plain_text
+from app.scrapers.common import is_internship_role, plain_text
+from app.scrapers.publication_dates import lookup_publication_date
 
 ANCHOR_PATTERN = re.compile(
     r"<a\b[^>]*?href\s*=\s*[\"']([^\"']+)[\"'][^>]*>(.*?)</a>",
@@ -60,7 +61,7 @@ class CareerPageSource(JobSource):
             href, anchor_html = match.groups()
             title = plain_text(anchor_html)
             absolute_url = urljoin(str(response.url), href)
-            if not title or absolute_url in seen:
+            if not title or absolute_url in seen or not is_internship_role(title):
                 continue
             if not any(
                 marker in absolute_url.casefold()
@@ -79,6 +80,7 @@ class CareerPageSource(JobSource):
                 continue
             seen.add(absolute_url)
             source_id = hashlib.sha256(absolute_url.encode()).hexdigest()[:24]
+            posted, evidence = lookup_publication_date(absolute_url, title)
             results.append(
                 JobPosting(
                     source=self.name,
@@ -88,7 +90,11 @@ class CareerPageSource(JobSource):
                     company=self.config.company,
                     location="Kraków",
                     description=nearby[:4000],
-                    raw_payload={"discovery": "official-career-page"},
+                    date_posted=posted.value,
+                    raw_payload={
+                        "discovery": "official-career-page",
+                        "_publication_check": evidence,
+                    },
                 )
             )
             if len(results) >= 50:

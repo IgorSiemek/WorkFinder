@@ -7,4 +7,6 @@ __pycache__/
 *.xlsx
 data/*.db
 data/*.sqlite*
+data/backups/
+data/*.db-*
 logs/

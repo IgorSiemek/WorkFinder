@@ -3,6 +3,13 @@
 {% block breadcrumb %}Application pipeline{% endblock %}
 {% block content %}
 <section class="page-heading heading-row"><div><p class="eyebrow">YOUR PIPELINE</p><h1>Applications</h1><p>Drag cards between columns or update the detailed status inside a job.</p></div><a href="/jobs?view=saved" class="button secondary">Find saved jobs</a></section>
+<section class="metrics-grid">
+  <div class="metric accent"><div><small>Tracked applications</small><strong>{{ progress.tracked }}</strong><em>excluding demos</em></div></div>
+  <div class="metric"><div><small>Applications sent</small><strong>{{ progress.applied }}</strong><em>all time</em></div></div>
+  <div class="metric"><div><small>In interviews</small><strong>{{ progress.interviews }}</strong><em>active processes</em></div></div>
+  <div class="metric"><div><small>Follow-ups due</small><strong>{{ progress.due }}</strong><em>today or overdue</em></div></div>
+</section>
+{% if follow_ups %}<section class="panel"><div class="section-heading"><div><h2>Keep things moving</h2><p>Your next actions, earliest first.</p></div><a href="/activity">View progress history →</a></div><div class="follow-up-list">{% for item in follow_ups %}<a href="/jobs/{{ item.job.id }}"><div><strong>{{ item.job.title }}</strong><small>{{ item.job.company }} · {{ item.status }}</small></div><span class="chip {% if item.next_action_date <= today %}warning{% endif %}">{{ 'Overdue · ' if item.next_action_date < today else 'Today · ' if item.next_action_date == today else '' }}{{ item.next_action_date.strftime('%d %b %Y') }}</span></a>{% endfor %}</div></section>{% endif %}
 <div class="kanban">
   {% for label, applications in groups.items() %}
   <section class="kanban-column" data-status="{{ label }}"><header><h2>{{ label }}</h2><span>{{ applications|length }}</span></header><div class="kanban-drop" data-status="{{ label }}">

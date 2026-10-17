@@ -4,7 +4,8 @@ import httpx
 
 from app.config import settings
 from app.scrapers.base import JobPosting, JobSource, SearchCriteria
-from app.scrapers.common import parse_date, plain_text, relevant_to_krakow
+from app.scrapers.common import is_internship_role, plain_text, relevant_to_krakow
+from app.scrapers.publication_dates import PublicationDate, date_evidence, source_date
 
 
 class ArbeitnowSource(JobSource):
@@ -27,11 +28,21 @@ class ArbeitnowSource(JobSource):
             title = plain_text(item.get("title"))
             location = plain_text(item.get("location"))
             remote = bool(item.get("remote"))
+            employment_type = ", ".join(item.get("job_types") or []) or "Not specified"
+            if not is_internship_role(title, employment_type):
+                continue
             text = f"{title} {description}".casefold()
             if keywords and not any(keyword in text for keyword in keywords):
                 continue
             if not relevant_to_krakow(location, description, remote):
                 continue
+            posted = source_date(item.get("created_at"))
+            evidence = date_evidence(
+                PublicationDate(posted, "Job board created_at", str(item.get("created_at")))
+                if posted
+                else PublicationDate(),
+                item["url"],
+            )
             jobs.append(
                 JobPosting(
                     source=self.name,
@@ -41,10 +52,10 @@ class ArbeitnowSource(JobSource):
                     company=plain_text(item.get("company_name")) or "Unknown company",
                     location=location,
                     remote_type="On-site",
-                    employment_type="Full-time",
+                    employment_type=employment_type,
                     description=description,
-                    date_posted=parse_date(item.get("created_at")),
-                    raw_payload=item,
+                    date_posted=posted,
+                    raw_payload={**item, "_publication_check": evidence},
                 )
             )
         return jobs

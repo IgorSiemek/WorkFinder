@@ -14,16 +14,21 @@ from app.config import settings
 from app.database import get_session
 from app.models import (
     Application,
+    ApplicationActivity,
     CandidateProfile,
     CompanyPreference,
     CvVersion,
+    ExcelSyncTask,
     IgnoreRule,
     Job,
     SavedSearch,
+    SearchObservation,
     SearchRun,
 )
-from app.scrapers.registry import provider_catalog
+from app.scrapers.registry import company_career_pages, provider_catalog
 from app.services.assistant import ApplicationAssistant
+from app.services.backups import backup_directory, list_backups
+from app.services.progress import CLOSED_STATUSES, INTERVIEW_STATUSES
 
 router = APIRouter()
 
@@ -52,6 +57,7 @@ def dashboard(request: Request, session: Session = Depends(get_session)) -> HTML
     new_today = (
         session.scalar(
             select(func.count(Job.id)).where(
+                Job.is_internship,
                 Job.date_discovered >= today_start,
                 Job.ignored.is_(False),
                 ~Job.application.has(Application.status.in_(APPLIED_STATUSES)),
@@ -62,6 +68,7 @@ def dashboard(request: Request, session: Session = Depends(get_session)) -> HTML
     new_week = (
         session.scalar(
             select(func.count(Job.id)).where(
+                Job.is_internship,
                 Job.date_discovered >= week_start,
                 Job.ignored.is_(False),
                 ~Job.application.has(Application.status.in_(APPLIED_STATUSES)),
@@ -71,7 +78,9 @@ def dashboard(request: Request, session: Session = Depends(get_session)) -> HTML
     )
     active_jobs = (
         session.scalar(
-            select(func.count(Job.id)).where(Job.is_active.is_(True), Job.ignored.is_(False))
+            select(func.count(Job.id)).where(
+                Job.is_internship, Job.is_active.is_(True), Job.ignored.is_(False)
+            )
         )
         or 0
     )
@@ -85,6 +94,7 @@ def dashboard(request: Request, session: Session = Depends(get_session)) -> HTML
     recent_jobs = session.scalars(
         select(Job)
         .where(
+            Job.is_internship,
             Job.ignored.is_(False),
             Job.is_active.is_(True),
             ~Job.application.has(Application.status.in_(APPLIED_STATUSES)),
@@ -93,7 +103,12 @@ def dashboard(request: Request, session: Session = Depends(get_session)) -> HTML
         .limit(6)
     ).all()
     matching_jobs = session.scalars(
-        select(Job).where(Job.is_active.is_(True), Job.ignored.is_(False), Job.match_score >= 50)
+        select(Job).where(
+            Job.is_internship,
+            Job.is_active.is_(True),
+            Job.ignored.is_(False),
+            Job.match_score >= 50,
+        )
     ).all()
     skill_counts = Counter(skill for job in matching_jobs for skill in job.skills)
     denominator = max(1, len(matching_jobs))
@@ -152,6 +167,7 @@ def jobs_page(
     status: str = "",
     min_score: int = Query(0, ge=0, le=100),
     days: int | None = Query(None, ge=0, le=365),
+    posted_days: int = Query(0, ge=0, le=365),
     hide_applied: str = "",
     sort: str = "score",
     page: int = Query(1, ge=1),
@@ -165,8 +181,17 @@ def jobs_page(
         filters.append(Job.application.has(Application.status == "Saved"))
     elif view == "ignored":
         filters = [Job.ignored.is_(True)]
+    if view not in {"saved", "ignored"}:
+        filters.append(Job.is_internship)
     if selected_days:
         filters.append(Job.date_discovered >= datetime.now() - timedelta(days=selected_days))
+    if posted_days:
+        filters.extend(
+            [
+                Job.date_posted >= date.today() - timedelta(days=posted_days - 1),
+                Job.date_posted <= date.today(),
+            ]
+        )
     if applied_hidden:
         filters.append(~Job.application.has(Application.status.in_(APPLIED_STATUSES)))
     if q:
@@ -189,7 +214,7 @@ def jobs_page(
     order = {
         "score": Job.match_score.desc(),
         "newest": Job.date_discovered.desc(),
-        "posted": Job.date_posted.desc(),
+        "posted": Job.date_posted.desc().nulls_last(),
         "company": Job.company.asc(),
     }.get(sort, Job.match_score.desc())
     base = select(Job).where(*filters)
@@ -201,9 +226,14 @@ def jobs_page(
         .offset((page - 1) * per_page)
         .limit(per_page)
     ).all()
+    scope_filters = [] if view in {"saved", "ignored"} else [Job.is_internship]
     filter_data = {
-        "companies": session.scalars(select(Job.company).distinct().order_by(Job.company)).all(),
-        "sources": session.scalars(select(Job.source).distinct().order_by(Job.source)).all(),
+        "companies": session.scalars(
+            select(Job.company).where(*scope_filters).distinct().order_by(Job.company)
+        ).all(),
+        "sources": session.scalars(
+            select(Job.source).where(*scope_filters).distinct().order_by(Job.source)
+        ).all(),
         "employment_types": session.scalars(
             select(Job.employment_type).distinct().order_by(Job.employment_type)
         ).all(),
@@ -273,6 +303,11 @@ def applications_page(request: Request, session: Session = Depends(get_session))
         label: [app for app in applications if app.status in statuses]
         for label, statuses in columns.items()
     }
+    live = [item for item in applications if not item.job.is_demo]
+    follow_ups = sorted(
+        (item for item in live if item.status not in CLOSED_STATUSES and item.next_action_date),
+        key=lambda item: item.next_action_date,
+    )
     return _templates(request).TemplateResponse(
         request,
         "applications.html",
@@ -280,6 +315,13 @@ def applications_page(request: Request, session: Session = Depends(get_session))
             "groups": grouped,
             "today": date.today(),
             "all_statuses": [s for v in columns.values() for s in v],
+            "progress": {
+                "tracked": len(live),
+                "applied": sum(item.date_applied is not None for item in live),
+                "interviews": sum(item.status in INTERVIEW_STATUSES for item in live),
+                "due": sum(item.next_action_date <= date.today() for item in follow_ups),
+            },
+            "follow_ups": follow_ups[:10],
         },
     )
 
@@ -336,6 +378,9 @@ def companies_page(request: Request, session: Session = Depends(get_session)) ->
                     "preference": pref,
                 }
             )
+    career_pages = company_career_pages()
+    for row in rows:
+        row["career_page"] = career_pages.get(row["name"])
     return _templates(request).TemplateResponse(request, "companies.html", {"companies": rows})
 
 
@@ -345,8 +390,69 @@ def runs_page(request: Request, session: Session = Depends(get_session)) -> HTML
         select(SearchRun)
         .options(selectinload(SearchRun.provider_runs))
         .order_by(SearchRun.started_at.desc())
+        .limit(100)
     ).all()
     return _templates(request).TemplateResponse(request, "runs.html", {"runs": runs})
+
+
+@router.get("/runs/{run_id}", response_class=HTMLResponse)
+def run_detail(
+    run_id: int,
+    request: Request,
+    session: Session = Depends(get_session),
+    page: int = Query(1, ge=1),
+) -> HTMLResponse:
+    run = session.get(SearchRun, run_id)
+    if run is None:
+        return _templates(request).TemplateResponse(request, "404.html", status_code=404)
+    query = select(SearchObservation).where(SearchObservation.search_run_id == run_id)
+    counts = dict(
+        session.execute(
+            select(SearchObservation.outcome, func.count())
+            .where(SearchObservation.search_run_id == run_id)
+            .group_by(SearchObservation.outcome)
+        ).all()
+    )
+    total = sum(counts.values())
+    observations = session.scalars(
+        query.order_by(SearchObservation.id).offset((page - 1) * 50).limit(50)
+    ).all()
+    return _templates(request).TemplateResponse(
+        request,
+        "run_detail.html",
+        {
+            "run": run,
+            "observations": observations,
+            "counts": counts,
+            "page": page,
+            "pages": max(1, math.ceil(total / 50)),
+        },
+    )
+
+
+@router.get("/activity", response_class=HTMLResponse)
+def activity_page(
+    request: Request,
+    session: Session = Depends(get_session),
+    page: int = Query(1, ge=1),
+) -> HTMLResponse:
+    query = select(ApplicationActivity).join(Application).join(Job).where(Job.is_demo.is_(False))
+    total = session.scalar(select(func.count()).select_from(query.subquery())) or 0
+    activities = session.scalars(
+        query.options(selectinload(ApplicationActivity.application).selectinload(Application.job))
+        .order_by(ApplicationActivity.at.desc(), ApplicationActivity.id.desc())
+        .offset((page - 1) * 50)
+        .limit(50)
+    ).all()
+    return _templates(request).TemplateResponse(
+        request,
+        "activity.html",
+        {
+            "activities": activities,
+            "page": page,
+            "pages": max(1, math.ceil(total / 50)),
+        },
+    )
 
 
 @router.get("/profile", response_class=HTMLResponse)
@@ -368,6 +474,11 @@ def settings_page(request: Request, session: Session = Depends(get_session)) -> 
     )
     searches = session.scalars(select(SavedSearch).order_by(SavedSearch.name)).all()
     ignore_rules = session.scalars(select(IgnoreRule).order_by(IgnoreRule.created_at.desc())).all()
+    sync_tasks = session.scalars(
+        select(ExcelSyncTask)
+        .where(ExcelSyncTask.status != "completed")
+        .options(selectinload(ExcelSyncTask.application).selectinload(Application.job))
+    ).all()
     return _templates(request).TemplateResponse(
         request,
         "settings.html",
@@ -376,6 +487,9 @@ def settings_page(request: Request, session: Session = Depends(get_session)) -> 
             "latest_run": latest,
             "searches": searches,
             "ignore_rules": ignore_rules,
+            "backups": list_backups()[:10],
+            "backup_directory": backup_directory(),
+            "sync_tasks": sync_tasks,
             "excel_path": settings.excel_jobs_path,
             "excel_exists": bool(
                 settings.excel_jobs_path and Path(settings.excel_jobs_path).is_file()

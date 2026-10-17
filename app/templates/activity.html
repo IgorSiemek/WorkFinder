@@ -1,0 +1,12 @@
+{% extends "base.html" %}
+{% block title %}Activity · WorkFinder{% endblock %}
+{% block breadcrumb %}Progress history{% endblock %}
+{% block content %}
+<section class="page-heading heading-row"><div><p class="eyebrow">EVERY STEP COUNTS</p><h1>Your progress history</h1><p>Status changes, notes, CV versions and follow-ups, saved with a timestamp. Demo activity is excluded.</p></div><a href="/applications" class="button secondary">Application board →</a></section>
+<section class="panel timeline progress-timeline">
+  {% for activity in activities %}
+  <div class="timeline-item"><i></i><div><span class="chip">{{ activity.event_type|replace('_', ' ')|title }}</span><a class="text-link" href="/jobs/{{ activity.application.job.id }}">{{ activity.application.job.title }} · {{ activity.application.job.company }}</a><p>{{ activity.description }}</p><small>{{ activity.at.strftime('%d %b %Y · %H:%M') }} UTC</small></div></div>
+  {% else %}<div class="empty-state"><h3>Your next step starts here</h3><p>Save an internship or update an application to start your history.</p><a href="/jobs" class="button primary">Explore internships</a></div>{% endfor %}
+</section>
+{% include "_pagination.html" %}
+{% endblock %}

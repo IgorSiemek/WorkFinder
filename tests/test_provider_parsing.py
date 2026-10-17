@@ -43,6 +43,15 @@ class FakeResponse:
                     "description": "Excel and financial analysis",
                     "created_at": "2026-09-30T08:00:00Z",
                 },
+                {
+                    "slug": "regular-job",
+                    "url": "https://example.com/regular-job",
+                    "title": "Junior Finance Analyst",
+                    "company_name": "Acme",
+                    "location": "Kraków",
+                    "remote": False,
+                    "description": "Finance reporting. Previous internship experience welcome.",
+                },
             ]
         }
 
@@ -52,6 +61,27 @@ def test_provider_filters_out_non_krakow_jobs(monkeypatch) -> None:  # noqa: ANN
     jobs = ArbeitnowSource().search_jobs(SearchCriteria(keywords=["finance"]))
     assert len(jobs) == 1
     assert jobs[0].location == "Kraków"
+
+
+def test_provider_uses_structured_internship_type(monkeypatch) -> None:  # noqa: ANN001
+    class TypedResponse(FakeResponse):
+        def json(self) -> dict:
+            return {
+                "data": [
+                    {
+                        "slug": "structured-internship",
+                        "url": "https://example.com/typed",
+                        "title": "Financial Analyst",
+                        "location": "Kraków",
+                        "job_types": ["Internship", "Part-time"],
+                    }
+                ]
+            }
+
+    monkeypatch.setattr("app.scrapers.arbeitnow.httpx.get", lambda *args, **kwargs: TypedResponse())
+    jobs = ArbeitnowSource().search_jobs(SearchCriteria(keywords=["financial"]))
+    assert len(jobs) == 1
+    assert jobs[0].employment_type == "Internship, Part-time"
 
 
 def test_only_krakow_location_spellings_are_accepted() -> None:

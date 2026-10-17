@@ -61,3 +61,17 @@ def test_manual_jobs_without_source_ids_do_not_all_merge(session) -> None:  # no
     session.commit()
     assert outcome == "new"
     assert imported_first.id != imported_second.id
+
+
+def test_distinct_provider_requisitions_are_not_merged_by_similar_titles(session) -> None:  # noqa: ANN001
+    first = posting("Intern Software Developer (Java)", "https://example.com/java", "Workday")
+    second = posting("Intern Software Developer (C++)", "https://example.com/cpp", "Workday")
+    first.source_job_id = "R100"
+    second.source_job_id = "R101"
+    assert not postings_match(first, second)
+    job_one, _ = import_posting(session, first)
+    session.commit()
+    job_two, outcome = import_posting(session, second)
+    session.commit()
+    assert outcome == "new"
+    assert job_one.id != job_two.id

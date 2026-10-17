@@ -29,6 +29,7 @@ class Settings:
     request_timeout_seconds: float = float(os.getenv("REQUEST_TIMEOUT_SECONDS", "20"))
     user_agent: str = os.getenv("USER_AGENT", "WorkFinder/1.0 (personal local job search tool)")
     excel_jobs_path: str = os.getenv("EXCEL_JOBS_PATH", "")
+    backup_dir: str = os.getenv("BACKUP_DIR", "data/backups")
 
 
 settings = Settings()

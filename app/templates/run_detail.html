@@ -1,0 +1,12 @@
+{% extends "base.html" %}
+{% block title %}Search details · WorkFinder{% endblock %}
+{% block breadcrumb %}<a href="/runs">Search runs</a><span>/</span>Run {{ run.id }}{% endblock %}
+{% block content %}
+<section class="page-heading"><p class="eyebrow">SEARCH AUDIT</p><h1>What this search found</h1><p>{{ run.started_at.strftime('%d %b %Y · %H:%M') }} UTC · {{ run.status|replace('_',' ')|title }}</p></section>
+<div class="scope-tags audit-counts">{% for outcome, count in counts.items() %}<span>{{ outcome|replace('_',' ')|title }}: {{ count }}</span>{% endfor %}</div>
+<section class="panel table-panel"><div class="table-scroll"><table><thead><tr><th>Opportunity</th><th>Company</th><th>Source</th><th>Result</th><th>Reason</th></tr></thead><tbody>
+{% for item in observations %}<tr><td>{% if item.job_id %}<a class="text-link" href="/jobs/{{ item.job_id }}">{{ item.title }}</a>{% else %}{{ item.title }}{% endif %}</td><td>{{ item.company }}</td><td>{{ item.provider }}</td><td><span class="chip">{{ item.outcome|replace('_',' ')|title }}</span></td><td class="audit-detail">{{ item.detail }}</td></tr>
+{% else %}<tr><td colspan="5">No offer-level history recorded. Searches from before this update retain provider totals.</td></tr>{% endfor %}
+</tbody></table></div></section>
+{% include "_pagination.html" %}
+{% endblock %}

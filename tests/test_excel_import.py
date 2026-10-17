@@ -72,6 +72,8 @@ def test_excel_import_is_idempotent(tmp_path, session: Session) -> None:  # noqa
     job = session.scalar(select(Job))
     application = session.scalar(select(Application))
     assert job is not None and job.company == "Hitachi" and job.location == "Kraków"
+    assert job.date_posted is None
+    assert "Excel date added: 2025-05-01" in job.notes
     assert application is not None and application.status == "Applied"
     assert application.date_applied is not None
     assert application.date_applied.date() == date.today() + timedelta(days=30)

@@ -20,6 +20,11 @@ from app.scrapers.base import JobPosting
 from app.services.search import import_posting
 
 WATCHLIST = [
+    "State Street",
+    "Motorola Solutions",
+    "Shell",
+    "ABB",
+    "Aon",
     "ING",
     "Santander",
     "PKO BP",
@@ -249,7 +254,7 @@ def seed_defaults(session: Session) -> None:
         for name, keywords in [
             ("Finance internships", ["finance", "intern"]),
             ("Data analyst internships", ["data analyst", "intern"]),
-            ("Business analyst junior", ["business analyst", "junior"]),
+            ("Business analyst internships", ["business analyst", "intern", "trainee"]),
             ("Economic research", ["economic", "research"]),
             ("Controlling / FP&A", ["controlling", "fp&a"]),
         ]:
