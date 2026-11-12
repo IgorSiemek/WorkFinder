@@ -214,3 +214,27 @@ def test_withdrawn_employer_posting_is_reported_before_opening_an_application(tm
             await form.close()
 
     asyncio.run(exercise())
+
+
+def test_custom_workday_dropdown_is_exposed_and_autofilled(tmp_path):
+    async def exercise():
+        form = FixtureForm()
+        try:
+            await form.start(job(), {}, {}, tmp_path / "sessions")
+            await form.page.locator("main").evaluate("""element => element.innerHTML = `
+                <label id="country-label">Country*</label>
+                <button id="country" type="button" aria-haspopup="listbox"
+                  aria-labelledby="country-label"
+                  onclick="document.querySelector('#countries').hidden=false">Select One</button>
+                <div role="listbox" id="countries" hidden>
+                  <div role="option" onclick="document.querySelector('#country').innerText='Poland';
+                    document.querySelector('#countries').hidden=true">Poland</div>
+                </div>`""")
+            snapshot = await form.inspect({"country": "Poland"}, {})
+            assert len(snapshot["fields"]) == 1
+            assert snapshot["fields"][0]["type"] == "combobox"
+            assert snapshot["fields"][0]["value"] == "Poland"
+        finally:
+            await form.close()
+
+    asyncio.run(exercise())

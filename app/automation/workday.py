@@ -25,8 +25,9 @@ FIELDS_SCRIPT = """() => {
     };
     const controls = [...document.querySelectorAll(
         'input, textarea, select, button[aria-haspopup="listbox"], [role="combobox"]'
-    )].filter(element => visible(element) &&
-        !['hidden', 'submit', 'button', 'search'].includes(element.type));
+    )].filter(element => visible(element) && (
+        element.matches('button[aria-haspopup="listbox"], [role="combobox"]') ||
+        !['hidden', 'submit', 'button', 'search'].includes(element.type)));
     return [...new Set(controls)].map((element, index) => {
         const container = element.closest('[data-automation-id^="formField"], fieldset');
         const label = labelText(element.labels?.[0]) || element.getAttribute('aria-label') ||
