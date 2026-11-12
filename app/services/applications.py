@@ -224,6 +224,8 @@ def draft_messages(draft: ApplicationDraft) -> list[dict]:
     snapshot = draft.snapshot
     parts = [header]
     details = []
+    if snapshot.get("job_reference"):
+        details.append("Numer oferty pracodawcy · " + snapshot["job_reference"])
     if draft.status == "review":
         parts.append("<b>Sprawdź przed wysłaniem</b>")
         cv_label = "Załączone CV" if snapshot.get("cv_attached") else "CV wymaga załączenia"

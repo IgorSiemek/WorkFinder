@@ -68,6 +68,20 @@ CONFIRMED = re.compile(
     re.I,
 )
 NEXT_LABELS = {"sign in", "continue", "next", "save and continue", "create account"}
+NEXT_SELECTOR = (
+    '[data-automation-id="bottom-navigation-next-button"], '
+    '[data-automation-id="pageFooterNextButton"], '
+    '[data-automation-id="pageFooterSubmitButton"]'
+)
+BACK_SELECTOR = (
+    '[data-automation-id="bottom-navigation-back-button"], '
+    '[data-automation-id="pageFooterPreviousButton"], '
+    '[data-automation-id="pageFooterBackButton"]'
+)
+
+
+class JobUnavailable(ValueError):
+    """The employer explicitly reports that the requested posting is unavailable."""
 
 
 def profile_value(label: str, profile: dict) -> str | None:
@@ -98,11 +112,14 @@ class WorkdayForm:
         self.storage_path = None
         self.uploaded = False
         self.autofilled = set()
+        self.requisition = ""
+        self.cv_name = ""
 
     async def start(self, job, profile: dict, cv: dict, directory: Path) -> dict:  # noqa: ANN001
         self.host = workday_host(job)
         if not self.host:
             raise ValueError("Nieobsługiwany adres formularza.")
+        self.requisition = urlsplit(job.original_url).path.rsplit("_", 1)[-1]
         directory.mkdir(parents=True, exist_ok=True, mode=0o700)
         self.storage_path = directory / (self.host + ".json")
         self.playwright = await async_playwright().start()
@@ -116,11 +133,19 @@ class WorkdayForm:
         self.page = await self.context.new_page()
         self.page.set_default_timeout(15000)
         await self.page.goto(job.original_url, wait_until="domcontentloaded", timeout=45000)
-        await self.page.get_by_role("button", name="Apply", exact=True).first.wait_for()
+        apply_button = self.page.get_by_role("button", name="Apply", exact=True).first
+        unavailable = self.page.get_by_text(
+            "The page you are looking for doesn't exist.", exact=True
+        )
+        await apply_button.or_(unavailable).first.wait_for(timeout=30000)
+        if await unavailable.count() and await unavailable.first.is_visible():
+            raise JobUnavailable("Ogłoszenie jest już niedostępne na stronie pracodawcy.")
+        if self.requisition not in urlsplit(self.page.url).path:
+            raise ValueError("Strona pracodawcy przekierowała poza wybraną ofertę.")
         decline = self.page.get_by_role("button", name="Decline", exact=True)
         if await decline.count() == 1 and await decline.is_visible():
             await decline.click()
-        await self.page.get_by_role("button", name="Apply", exact=True).first.click()
+        await apply_button.click()
         # The modal may offer several application methods or immediately require sign-in.
         methods = self.page.get_by_role("button", name="Autofill with Resume", exact=True)
         manual = self.page.get_by_role("button", name="Apply Manually", exact=True)
@@ -157,7 +182,7 @@ class WorkdayForm:
             raise ValueError("Formularz przekierował poza obsługiwaną stronę pracodawcy.")
 
     async def submit_button(self):  # noqa: ANN201
-        button = self.page.locator('[data-automation-id="bottom-navigation-next-button"]')
+        button = self.page.locator(NEXT_SELECTOR)
         if await button.count() and await button.first.is_visible():
             label = (await button.first.inner_text()).strip()
             if label.casefold() in {"submit", "submit application"}:
@@ -165,7 +190,7 @@ class WorkdayForm:
         return None
 
     async def next_button(self):  # noqa: ANN201
-        navigation = self.page.locator('[data-automation-id="bottom-navigation-next-button"]')
+        navigation = self.page.locator(NEXT_SELECTOR)
         if await navigation.count() == 1:
             return navigation
         authentication = self.page.locator(
@@ -173,7 +198,9 @@ class WorkdayForm:
         )
         if await authentication.count() == 1:
             return authentication
-        return self.page.get_by_role(
+        main = self.page.locator("main")
+        root = main if await main.count() == 1 else self.page
+        return root.get_by_role(
             "button",
             name=re.compile(r"^(Sign In|Continue|Next|Save and Continue|Create Account)$", re.I),
         )
@@ -183,7 +210,8 @@ class WorkdayForm:
         if "/apply/" in self.page.url:
             ready = self.page.locator(
                 'input:not([type="hidden"]):not([type="search"]):visible, textarea:visible, '
-                '[data-automation-id="bottom-navigation-next-button"], input[type="file"]'
+                + NEXT_SELECTOR
+                + ', input[type="file"]'
             )
             await ready.first.wait_for(state="attached", timeout=30000)
         notice = ""
@@ -237,9 +265,11 @@ class WorkdayForm:
             "next": next_label,
             "submit": bool(submit),
             "notice": notice,
-            "cv_attached": self.uploaded,
+            "cv_attached": self.uploaded
+            and (not submit or self.cv_name.casefold() in text.casefold()),
+            "job_reference": self.requisition,
         }
-        back = self.page.locator('[data-automation-id="bottom-navigation-back-button"]')
+        back = self.page.locator(BACK_SELECTOR)
         snapshot["back"] = await back.count() == 1 and await back.is_visible()
         create_account = self.page.locator('[data-automation-id="createAccountLink"]')
         snapshot["create_account"] = (
@@ -247,7 +277,7 @@ class WorkdayForm:
         )
         sign_in = self.page.locator('[data-automation-id="signInLink"]')
         snapshot["sign_in"] = await sign_in.count() == 1 and await sign_in.is_visible()
-        if submit and not self.uploaded:
+        if submit and not snapshot["cv_attached"]:
             snapshot["notice"] = "Załączenie CV wymaga sprawdzenia. Wróć do kroku z CV."
         snapshot["fingerprint"] = fingerprint(snapshot)
         await self.save_session()
@@ -288,6 +318,7 @@ class WorkdayForm:
             }
         )
         self.uploaded = True
+        self.cv_name = cv["name"]
 
     async def upload_cv(self, field: dict, cv: dict) -> None:
         locator = self.page.locator(f'[data-workfinder-field="{field["id"]}"]')
@@ -320,7 +351,7 @@ class WorkdayForm:
         await button.click()
 
     async def back(self) -> None:
-        button = self.page.locator('[data-automation-id="bottom-navigation-back-button"]')
+        button = self.page.locator(BACK_SELECTOR)
         if await button.count() != 1:
             raise ValueError("Przycisk Wstecz jest niedostępny.")
         await button.click()
@@ -333,9 +364,11 @@ class WorkdayForm:
 
     async def validate_review(self, approved: dict, profile: dict, cv: dict) -> dict:
         current = await self.inspect(profile, cv, autofill=False)
+        if self.requisition not in urlsplit(self.page.url).path:
+            raise ValueError("Adres formularza nie odpowiada wybranej ofercie.")
         if not current["submit"] or current["fingerprint"] != approved.get("fingerprint"):
             raise ValueError("Formularz zmienił się. Sprawdź aktualne podsumowanie przez /form.")
-        if not self.uploaded:
+        if not current["cv_attached"]:
             raise ValueError("Nie potwierdzono załączenia CV. Użyj strony pracodawcy.")
         if any(
             field["required"]

@@ -6,7 +6,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from app.automation.workday import WorkdayForm
+from app.automation.workday import JobUnavailable, WorkdayForm
 
 pytestmark = pytest.mark.skipif(
     os.getenv("RUN_BROWSER_TESTS") != "1",
@@ -63,8 +63,10 @@ function submitApplication() {
 
 
 class FixtureForm(WorkdayForm):
+    form_html = FORM_HTML
+
     async def route(self, route):
-        await route.fulfill(status=200, content_type="text/html", body=FORM_HTML)
+        await route.fulfill(status=200, content_type="text/html", body=self.form_html)
 
 
 def job():
@@ -75,7 +77,8 @@ def job():
     )
 
 
-def test_browser_fills_cv_profile_questions_and_waits_for_explicit_submission(tmp_path):
+@pytest.mark.parametrize("footer", ["bottom-navigation-next-button", "pageFooterNextButton"])
+def test_browser_fills_cv_profile_questions_and_waits_for_explicit_submission(tmp_path, footer):
     async def exercise():
         cv_path = tmp_path / "cv.pdf"
         cv_path.write_bytes(b"%PDF-1.7\n%%EOF")
@@ -87,6 +90,7 @@ def test_browser_fills_cv_profile_questions_and_waits_for_explicit_submission(tm
             "phone": "+48123456789",
         }
         form = FixtureForm()
+        form.form_html = FORM_HTML.replace("bottom-navigation-next-button", footer)
         try:
             snapshot = await form.start(job(), profile, cv, tmp_path / "sessions")
             assert snapshot["cv_attached"]
@@ -186,6 +190,26 @@ def test_account_form_uses_primary_button_and_omits_honeypot(tmp_path):
             assert snapshot["next"] == "Create Account"
             assert snapshot["sign_in"]
             assert len(snapshot["fields"]) == 2
+        finally:
+            await form.close()
+
+    asyncio.run(exercise())
+
+
+def test_withdrawn_employer_posting_is_reported_before_opening_an_application(tmp_path):
+    class WithdrawnForm(WorkdayForm):
+        async def route(self, route):
+            await route.fulfill(
+                status=200,
+                content_type="text/html",
+                body="<main>The page you are looking for doesn't exist.</main>",
+            )
+
+    async def exercise():
+        form = WithdrawnForm()
+        try:
+            with pytest.raises(JobUnavailable):
+                await form.start(job(), {}, {}, tmp_path / "sessions")
         finally:
             await form.close()
 

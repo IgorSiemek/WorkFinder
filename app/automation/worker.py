@@ -8,7 +8,7 @@ from datetime import timedelta
 
 from sqlalchemy import select
 
-from app.automation.workday import WorkdayForm
+from app.automation.workday import JobUnavailable, WorkdayForm
 from app.models import ApplicationDraft, utcnow
 from app.services.applications import ACTIVE, MAX_CV_BYTES, draft_messages
 from app.services.bot_config import config_path
@@ -223,10 +223,13 @@ class ApplicationWorker:
                     )
                 else:
                     draft.status = "failed"
-                    draft.error = (
-                        "Strona wymaga ręcznej obsługi albo sesja wygasła. "
-                        "Otwórz ofertę na stronie firmy."
-                    )
+                    if isinstance(exc, JobUnavailable):
+                        draft.error = str(exc)
+                    else:
+                        draft.error = (
+                            "Strona wymaga ręcznej obsługi albo sesja wygasła. "
+                            "Otwórz ofertę na stronie firmy."
+                        )
                 draft.action = {}
                 draft.revision += 1
                 self.notify(session, draft)
