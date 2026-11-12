@@ -38,6 +38,8 @@ def button(text: str, data: str) -> dict:
 
 
 def job_card(job: Job, *, detailed: bool = False) -> dict:
+    from app.services.applications import workday_host
+
     text = (
         f"<b>{escape(job.title[:300])}</b>\n{escape(job.company[:200])}\n"
         f"{escape(job.location[:240])} · {escape(job.remote_type)}\n"
@@ -83,6 +85,8 @@ def job_card(job: Job, *, detailed: bool = False) -> dict:
         and not job.ignored
         and (not job.application or job.application.status in {"Saved", "Preparing"})
     ):
+        if workday_host(job):
+            rows.append([button("Przygotuj aplikację", f"prepare:{job.id}")])
         actions.append(button("Aplikacja wysłana", f"apply:{job.id}"))
     if actions:
         rows.append(actions)

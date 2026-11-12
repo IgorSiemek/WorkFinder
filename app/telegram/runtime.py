@@ -12,6 +12,7 @@ from pathlib import Path
 import httpx
 from sqlalchemy import select
 
+from app.automation.worker import ApplicationWorker
 from app.config import settings
 from app.database import SessionLocal, init_database
 from app.models import SearchRun, utcnow
@@ -350,6 +351,7 @@ class BotRuntime:
             group.create_task(resilient(self.poll))
             group.create_task(resilient(self.deliver))
             group.create_task(self.schedule())
+            group.create_task(ApplicationWorker(self.client, self.controller, SessionLocal).run())
 
 
 async def run_bot(config: dict) -> None:
@@ -378,6 +380,9 @@ async def run_bot(config: dict) -> None:
                     ("applications", "Moje aplikacje"),
                     ("search", "Szukaj teraz"),
                     ("followups", "Przypomnienia"),
+                    ("setup", "Dane do aplikowania"),
+                    ("uploadcv", "Prześlij CV"),
+                    ("form", "Otwarty formularz"),
                     ("health", "Stan wyszukiwania"),
                     ("help", "Wszystkie polecenia"),
                     ("config", "Konfiguracja"),

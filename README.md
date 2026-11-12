@@ -9,6 +9,7 @@ Uruchomienie wymaga Pythona 3.12+, tokena bota utworzonego przez oficjalnego [Bo
    ```powershell
    python -m venv .venv
    .venv\Scripts\python.exe -m pip install -r requirements.txt
+   .venv\Scripts\python.exe -m playwright install --only-shell chromium
    ```
 
 2. Utwórz `.env` na podstawie `.env.example`, jeśli plik jeszcze nie istnieje. Ustaw `TELEGRAM_BOT_TOKEN`. Wyślij `/start` do nowego bota i odczytaj swój identyfikator.
@@ -35,7 +36,23 @@ Uruchomienie wymaga Pythona 3.12+, tokena bota utworzonego przez oficjalnego [Bo
 
    Wyślij `/start`, następnie wybierz „Szukaj teraz”. Domyślny harmonogram wyszukuje o 09:00 i 17:00 według `Europe/Warsaw`. Przypomnienia o zaległych działaniach pojawiają się raz dziennie po 10:00. Próg dopasowania wynosi 60/100. Te wartości można zmienić w konfiguracji.
 
-Karty ofert mają przyciski otwarcia oferty, zapisania, pominięcia i oznaczenia wysłanej aplikacji. Przycisk „Status” pozwala wybrać etap rekrutacji. Zgłoszenie wysyłasz na stronie pracodawcy, następnie zapisujesz jego status w bocie.
+Karty ofert mają przyciski otwarcia oferty, zapisania, pominięcia i oznaczenia wysłanej aplikacji. Przycisk „Status” pozwala wybrać etap rekrutacji. Dla Motorola Solutions, BBH, Aptiv i State Street dostępne jest przygotowanie formularza Workday z przeglądem przed wysłaniem.
+
+### Formularze aplikacyjne
+
+1. Wyślij `/setup` i uzupełnij dane kontaktowe. `/applicant` pokazuje zapisany profil, a `/applicant email nowy@example.com` zmienia pojedyncze pole. Dane są wspólne dla uprawnionych kont.
+2. Wyślij `/uploadcv`, następnie CV jako plik PDF do 10 MB.
+3. Przy ofercie wybierz „Przygotuj aplikację”. Potwierdź udostępnienie danych i CV wskazanemu pracodawcy. Bot uruchomi Chromium, uzupełni rozpoznane pola i załączy CV w obsługiwanym uploaderze Workday.
+4. Uzupełniaj pozostałe pola przez przyciski w Telegramie. Pola wyboru pokazują odpowiedzi pracodawcy. „Zapamiętaj odpowiedź dla tej firmy” zapisuje ją do kolejnych aplikacji u tego pracodawcy. „Save and Continue” przechodzi do następnego kroku. Logowanie i dodatkowe pytania mogą wymagać Twoich odpowiedzi.
+5. Sprawdź pełną treść strony Review i wybierz „Wyślij aplikację”. Potwierdzenie ze strony pracodawcy zapisuje status Applied i wersję CV. Zmiana treści podsumowania wymaga ponownego sprawdzenia.
+
+`/form` otwiera bieżący formularz. „Wstecz” pozwala poprawić wcześniejszy krok, jeśli strona udostępnia ten przycisk. „Anuluj” zamyka sesję. `/cancel` kończy wprowadzanie pojedynczej odpowiedzi lub konfigurację profilu.
+
+Na VM działa jedna sesja formularza naraz, z limitem godziny bez działania. Restart procesu zamyka otwarte formularze i umożliwia ponowne przygotowanie. Przerwanie podczas wysyłania zapisuje stan uncertain. Sprawdź wtedy konto pracodawcy przed kolejną próbą.
+
+Integracja korzysta z rozpoznanych kontrolek Workday. CAPTCHA, zewnętrzne logowanie i nietypowe kontrolki mogą wymagać dokończenia na stronie firmy. Widok formularza zawiera link do oferty. Testy przeglądarkowe sprawdzają profil, CV, dodatkowe pytania, przegląd i wysłanie na odizolowanym formularzu testowym. Rzeczywista aplikacja wymaga danych kandydata i sprawdzenia danego formularza pracodawcy.
+
+Pliki CV i sesje logowania są przechowywane w `data/applications/`, a profil i szkice formularzy w SQLite. Nowe CV jest używane przy kolejnych przygotowaniach. Otwarty szkic zachowuje wybraną kopię profilu i CV. Zabezpiecz ten katalog tak samo jak bazę.
 
 | Polecenie | Działanie |
 |---|---|
@@ -49,6 +66,7 @@ Karty ofert mają przyciski otwarcia oferty, zapisania, pominięcia i oznaczenia
 | `/followups`, `/followups 2` | Działania na dziś i zaległe |
 | `/search`, `/health` | Wyszukiwanie i stan źródeł oraz kolejki wiadomości |
 | `/pause`, `/resume` | Wstrzymanie i wznowienie powiadomień |
+| `/setup`, `/applicant`, `/uploadcv`, `/form` | Profil, CV w PDF i formularz aplikacyjny |
 | `/config`, `/reload` | Podsumowanie ustawień i wczytanie JSON |
 | `/backup`, `/excel`, `/dates 12` | Backup, ponowienie eksportu do Excela, data publikacji |
 | `/add Tytuł stażu \| Firma \| https://link \| Hybrid \| Opis` | Ręczne dodanie stażu w Krakowie |

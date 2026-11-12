@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from pathlib import PurePosixPath
+
 import httpx
 
 
@@ -35,3 +37,21 @@ class TelegramClient:
 
     async def close(self) -> None:
         await self.http.aclose()
+
+    async def download_file(self, file_id: str, maximum_bytes: int) -> bytes:
+        metadata = await self.call("getFile", file_id=file_id)
+        path = metadata.get("file_path", "")
+        if not path or ".." in PurePosixPath(path).parts or "?" in path or "#" in path:
+            raise ValueError("Nieprawidłowy adres pliku z Telegrama.")
+        if metadata.get("file_size", 0) > maximum_bytes:
+            raise ValueError("Plik CV jest zbyt duży.")
+        token_path = self.http.base_url.path.strip("/")
+        url = f"https://api.telegram.org/file/{token_path}/{path.lstrip('/')}"
+        data = bytearray()
+        async with self.http.stream("GET", url) as response:
+            response.raise_for_status()
+            async for chunk in response.aiter_bytes():
+                data.extend(chunk)
+                if len(data) > maximum_bytes:
+                    raise ValueError("Plik CV jest zbyt duży.")
+        return bytes(data)

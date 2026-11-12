@@ -1,4 +1,5 @@
 .venv/
+.playwright/
 __pycache__/
 *.py[cod]
 .pytest_cache/
@@ -12,3 +13,4 @@ data/*.db-*
 logs/
 data/config*.json
 data/workfinder.lock
+data/applications/

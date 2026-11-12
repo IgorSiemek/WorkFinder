@@ -11,6 +11,7 @@ from sqlalchemy import update as sql_update
 from sqlalchemy.orm import Session
 
 from app.models import ApplicationActivity, BotMessage, BotState, SearchRun, utcnow
+from app.services import applications as apply_service
 from app.services.bot_config import apply_config, load_config, next_search
 from app.services.jobs import (
     add_manual_job,
@@ -45,6 +46,11 @@ HELP = """<b>WorkFinder</b>
 /backup — utwórz backup bazy
 /excel — ponów synchronizację Excela
 /dates ID — sprawdź datę publikacji
+/setup — dane do automatycznego uzupełniania formularzy
+/applicant — profil do aplikowania
+/uploadcv — prześlij CV w PDF
+/form — otwarty formularz i podsumowanie
+/cancel — zakończ wprowadzanie odpowiedzi
 /delivery ID — ponów nieudaną wiadomość
 /start — pokaż menu
 
@@ -249,11 +255,82 @@ class BotController:
         callback = update.get("callback_query")
         if callback:
             return self.callback(session, callback.get("data", ""))
+        document = update["message"].get("document")
+        if document:
+            if not self.state(session, "awaiting_cv"):
+                raise ValueError("Aby zapisać plik jako CV, użyj najpierw /uploadcv.")
+            if not document.get("file_name", "").lower().endswith(".pdf"):
+                raise ValueError("Prześlij CV jako plik PDF.")
+            if document.get("file_size", 0) > apply_service.MAX_CV_BYTES:
+                raise ValueError("Maksymalny rozmiar CV to 10 MB.")
+            if self.state(session, "cv_upload", scope=self.admin_scope):
+                raise ValueError("Trwa pobieranie poprzedniego CV. Poczekaj na potwierdzenie.")
+            self.set_state(
+                session,
+                "cv_upload",
+                {
+                    "file_id": document["file_id"],
+                    "name": document["file_name"][:128],
+                    "user_id": self.owner_id,
+                    "update_id": update["update_id"],
+                },
+                scope=self.admin_scope,
+            )
+            self.set_state(session, "awaiting_cv", False)
+            return [{"text": "Pobieram CV. Potwierdzę zapis po sprawdzeniu pliku."}]
         text = update["message"].get("text", "").strip()
+        if text and not text.startswith("/"):
+            setup_field = self.state(session, "setup_field")
+            if setup_field:
+                apply_service.save_profile_value(self, session, setup_field, text)
+                return [apply_service.setup_next(self, session, setup_field)]
+            pending = self.state(session, "form_field")
+            if pending:
+                draft = apply_service.request_action(
+                    self,
+                    session,
+                    pending["draft"],
+                    pending["revision"],
+                    "answer",
+                    field=pending["field"],
+                    value="" if text == "-" else text,
+                )
+                self.set_state(session, "form_field", None)
+                return [{"text": f"Uzupełniam pole. Formularz #{draft.id}."}]
         head, _, argument = text.partition(" ")
         command = head.split("@")[0].lower()
         command = command.removeprefix("/")
         argument = argument.strip()
+        if command == "cancel":
+            self.set_state(session, "setup_field", None)
+            self.set_state(session, "form_field", None)
+            self.set_state(session, "awaiting_cv", False)
+            return [
+                {
+                    "text": "Wprowadzanie odpowiedzi zakończone. "
+                    "Otwarty formularz znajdziesz pod /form."
+                }
+            ]
+        if command == "setup":
+            self.set_state(session, "form_field", None)
+            return [apply_service.setup_next(self, session)]
+        if command == "applicant":
+            if argument:
+                field, _, value = argument.partition(" ")
+                apply_service.save_profile_value(self, session, field, value)
+            return [apply_service.profile_message(self, session)]
+        if command == "uploadcv":
+            self.set_state(session, "awaiting_cv", True)
+            return [
+                {
+                    "text": "Wyślij CV jako plik PDF do 10 MB. "
+                    "Plik będzie wspólny dla obu kont i używany do przygotowywania aplikacji."
+                }
+            ]
+        if command == "form":
+            return apply_service.draft_messages(
+                apply_service.owned_draft(self, session, int(argument) if argument else None)
+            )
         if command in {"invite", "members", "revoke"}:
             if self.owner_id != self.administrator_id:
                 raise ValueError("Dostępem do bota zarządza administrator.")
@@ -426,6 +503,129 @@ class BotController:
     def callback(self, session: Session, data: str) -> list[dict]:
         parts = data.split(":")
         action = parts[0]
+        if action == "prepare" and len(parts) == 2:
+            job = get_job(session, int(parts[1]))
+            # Preparation sends profile data/CV to this employer before final submission.
+            return [
+                {
+                    "text": "Przygotowanie udostępni dane profilu i CV "
+                    f"firmie {escape(job.company)} "
+                    "przez jej formularz Workday.\n"
+                    "Po uzupełnieniu sprawdzisz podsumowanie "
+                    "i osobno zatwierdzisz wysłanie aplikacji.",
+                    "reply_markup": {
+                        "inline_keyboard": [
+                            [button("Przygotuj formularz", f"prepareconfirm:{job.id}")]
+                        ]
+                    },
+                }
+            ]
+        if action == "prepareconfirm" and len(parts) == 2:
+            return apply_service.draft_messages(apply_service.prepare(self, session, int(parts[1])))
+        if action == "form" and len(parts) >= 4:
+            draft_id, revision, kind = int(parts[1]), int(parts[2]), parts[3]
+            if kind == "remember":
+                draft = apply_service.owned_draft(self, session, draft_id)
+                answer = draft.snapshot.get("last_answer")
+                if (
+                    revision != draft.revision
+                    or not answer
+                    or draft.action
+                    or draft.status not in {"input", "review"}
+                ):
+                    raise ValueError("Odpowiedź wygasła. Otwórz /form.")
+                bank = dict(self.state(session, "applicant_answers", {}, scope=self.admin_scope))
+                host = apply_service.workday_host(draft.job)
+                saved = dict(bank.get(host, {}))
+                saved[apply_service.question_key(answer["label"])] = answer["value"]
+                bank[host] = saved
+                self.set_state(session, "applicant_answers", bank, scope=self.admin_scope)
+                draft.snapshot = {
+                    key: value for key, value in draft.snapshot.items() if key != "last_answer"
+                }
+                draft.revision += 1
+                return [
+                    {
+                        "text": "Odpowiedź będzie uzupełniana "
+                        "przy kolejnych aplikacjach do tej firmy."
+                    },
+                    *apply_service.draft_messages(draft),
+                ]
+            if kind == "choicepage" and len(parts) == 5:
+                draft = apply_service.owned_draft(self, session, draft_id)
+                offset = int(parts[4])
+                if (
+                    revision != draft.revision
+                    or draft.status not in {"input", "review"}
+                    or draft.action
+                    or not 0 <= offset < len(draft.snapshot.get("options", []))
+                ):
+                    raise ValueError("Widok pola wygasł. Otwórz /form.")
+                draft.snapshot = {**draft.snapshot, "options_page": offset}
+                draft.revision += 1
+                return apply_service.draft_messages(draft)
+            if kind == "field" and len(parts) == 5:
+                draft = apply_service.owned_draft(self, session, draft_id)
+                if (
+                    revision != draft.revision
+                    or draft.status not in {"input", "review"}
+                    or draft.action
+                ):
+                    raise ValueError("Widok pola wygasł. Otwórz /form.")
+                field_id = int(parts[4])
+                field = next(
+                    (item for item in draft.snapshot.get("fields", []) if item["id"] == field_id),
+                    None,
+                )
+                if field is None:
+                    raise ValueError("Pole wygasło. Otwórz /form.")
+                if field["type"] == "file":
+                    apply_service.request_action(
+                        self, session, draft_id, revision, "uploadcv", field=field_id
+                    )
+                    return [{"text": "Załączam zapisane CV do wybranego pola formularza."}]
+                if field["options"] or field["type"] in {
+                    "combobox",
+                    "select-one",
+                    "radio",
+                    "checkbox",
+                }:
+                    apply_service.request_action(
+                        self, session, draft_id, revision, "options", field=field_id
+                    )
+                    return [{"text": "Pobieram możliwe odpowiedzi."}]
+                self.set_state(session, "setup_field", None)
+                self.set_state(
+                    session,
+                    "form_field",
+                    {"draft": draft_id, "revision": revision, "field": field_id},
+                )
+                return [
+                    {
+                        "text": escape(field["label"])
+                        + "\nWyślij wartość w kolejnej wiadomości. Znak - usuwa wartość. "
+                        "/cancel kończy wprowadzanie."
+                    }
+                ]
+            if kind == "choice" and len(parts) == 5:
+                draft = apply_service.owned_draft(self, session, draft_id)
+                options = draft.snapshot.get("options", [])
+                index = int(parts[4])
+                if not 0 <= index < len(options):
+                    raise ValueError("Odpowiedź wygasła. Otwórz /form.")
+                apply_service.request_action(
+                    self,
+                    session,
+                    draft_id,
+                    revision,
+                    "answer",
+                    field=draft.snapshot["choosing"],
+                    value=options[index]["value"],
+                )
+            else:
+                apply_service.request_action(self, session, draft_id, revision, kind)
+            self.set_state(session, "form_field", None)
+            return [{"text": "Działanie przyjęte. Poczekaj na aktualny formularz."}]
         if action == "search":
             self.set_state(session, "search_requested", True)
             return [{"text": "Wyszukiwanie zaplanowane."}]

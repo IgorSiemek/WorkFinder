@@ -8,6 +8,7 @@ services:
         VCS_REF: ${APP_BUILD_REF:-local}
     restart: unless-stopped
     init: true
+    shm_size: 256mb
     stop_grace_period: 2m
     env_file: .env
     environment:

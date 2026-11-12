@@ -285,6 +285,25 @@ class BotState(Base):
     value: Mapped[Any] = mapped_column(JSON)
 
 
+class ApplicationDraft(Base, TimestampMixin):
+    __tablename__ = "application_drafts"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    job_id: Mapped[int] = mapped_column(ForeignKey("jobs.id"), unique=True)
+    user_id: Mapped[int] = mapped_column(Integer)
+    status: Mapped[str] = mapped_column(String(30), default="queued", index=True)
+    revision: Mapped[int] = mapped_column(Integer, default=0)
+    profile: Mapped[dict] = mapped_column(JSON, default=dict)
+    cv: Mapped[dict] = mapped_column(JSON, default=dict)
+    snapshot: Mapped[dict] = mapped_column(JSON, default=dict)
+    answers: Mapped[dict] = mapped_column(JSON, default=dict)
+    action: Mapped[dict] = mapped_column(JSON, default=dict)
+    error: Mapped[str | None] = mapped_column(Text)
+    receipt: Mapped[str | None] = mapped_column(Text)
+
+    job: Mapped[Job] = relationship()
+
+
 class BotMessage(Base):
     __tablename__ = "bot_messages"
 
