@@ -3,16 +3,14 @@ from __future__ import annotations
 from datetime import timedelta
 
 import pytest
-from fastapi.testclient import TestClient
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.database import get_session
-from app.main import app
 from app.models import Application, Job, utcnow
 from app.scrapers.base import JobPosting
 from app.scrapers.common import internship_label, is_internship_role
 from app.services import search
+from app.services.jobs import add_manual_job, list_jobs
 from app.services.matching import score_job
 
 ROLE_CASES = [
@@ -85,47 +83,18 @@ def test_discovery_filters_existing_jobs_before_pagination_and_keeps_history(
     session.add(Application(job=ordinary[0], status="Saved"))
     session.commit()
 
-    def override_session():  # noqa: ANN202
-        yield session
-
-    app.dependency_overrides[get_session] = override_session
-    try:
-        client = TestClient(app)
-        for url in ("/jobs", "/jobs?view=new", "/jobs?view=unknown"):
-            response = client.get(url)
-            assert response.status_code == 200
-            assert response.context["total"] == 2
-            assert response.context["pages"] == 1
-            assert "English Finance Intern" in response.text
-            assert "Polski program stażowy" in response.text
-            assert "Regular Analyst" not in response.text
-            assert "INTERNSHIPS ONLY" in response.text
-
-        dashboard = client.get("/")
-        assert dashboard.status_code == 200
-        assert dashboard.context["active_jobs"] == 2
-        assert dashboard.context["new_today"] == 2
-        assert dashboard.context["new_week"] == 2
-        assert "Regular Analyst" not in dashboard.text
-        assert "Regular Analyst 0" in client.get("/jobs?view=saved").text
-        assert "Archived Regular Analyst" in client.get("/jobs?view=ignored").text
-        assert "Regular Analyst 0" in client.get("/applications").text
-
-        rejected = client.post(
-            "/actions/manual-job",
-            data={
-                "title": "Internal Auditor",
-                "company": "Example",
-                "url": "https://example.com/manual",
-                "employment_type": "Full-time",
-            },
-            follow_redirects=False,
-        )
-        assert rejected.status_code == 303
-        assert rejected.headers["location"].startswith("/jobs/new/manual?")
-        assert session.scalar(select(Job).where(Job.title == "Internal Auditor")) is None
-    finally:
-        app.dependency_overrides.pop(get_session, None)
+    for view in ("all", "new"):
+        jobs, total = list_jobs(session, view, page_size=1)
+        assert total == 2
+        assert len(jobs) == 1
+        assert jobs[0].title == "English Finance Intern"
+        assert list_jobs(session, view, page=2, page_size=1)[0][0].id == trainee.id
+    assert "Regular Analyst 0" in {job.title for job in list_jobs(session, "saved")[0]}
+    assert "Archived Regular Analyst" in {job.title for job in list_jobs(session, "ignored")[0]}
+    assert "Regular Analyst 0" in {job.title for job in list_jobs(session, "applications")[0]}
+    with pytest.raises(ValueError):
+        add_manual_job(session, "Internal Auditor | Example | https://example.com/manual")
+    assert session.scalar(select(Job).where(Job.title == "Internal Auditor")) is None
 
 
 def test_search_rejects_regular_jobs_even_when_provider_returns_them(

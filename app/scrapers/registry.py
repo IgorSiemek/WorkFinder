@@ -5,6 +5,7 @@ from dataclasses import dataclass
 from app.scrapers.arbeitnow import ArbeitnowSource
 from app.scrapers.base import JobSource
 from app.scrapers.career_pages import CareerPageConfig, CareerPageSource
+from app.scrapers.employer_feeds import AliorSource, HitachiSource, PhenomSource
 from app.scrapers.workday import WorkdayConfig, WorkdaySource
 
 
@@ -58,7 +59,7 @@ def _company_sources() -> list[JobSource]:
         CareerPageConfig(
             "Hitachi Careers",
             "Hitachi",
-            "https://careers.hitachi.com/search/jobs",
+            "https://careers.hitachi.com/jobs",
         ),
         CareerPageConfig(
             "UBS Careers",
@@ -95,7 +96,7 @@ def _company_sources() -> list[JobSource]:
         CareerPageConfig(
             "PMI Careers",
             "Philip Morris International",
-            "https://join.pmicareers.com/gb/en/search-results?keywords=&location=Krakow",
+            "https://join.pmicareers.com/gb/en/search-results",
             True,
         ),
         CareerPageConfig(
@@ -107,11 +108,19 @@ def _company_sources() -> list[JobSource]:
         CareerPageConfig(
             "Cisco Careers",
             "Cisco",
-            "https://jobs.cisco.com/jobs/SearchJobs/?keyword=&location=Krakow%2C%20Poland",
+            "https://careers.cisco.com/global/en/search-results",
             True,
         ),
     ]
-    return workday_sources + [CareerPageSource(config) for config in pages]
+    adapters = {
+        "Hitachi": HitachiSource,
+        "Alior": AliorSource,
+        "Philip Morris International": PhenomSource,
+        "Cisco": PhenomSource,
+    }
+    return workday_sources + [
+        adapters.get(config.company, CareerPageSource)(config) for config in pages
+    ]
 
 
 def enabled_sources() -> list[JobSource]:
@@ -131,13 +140,21 @@ def company_career_pages() -> dict[str, dict[str, str]]:
             if isinstance(source, CareerPageSource)
             else (f"https://{config.host}/en-US/{config.site}")
         )
-        pages[config.company] = {"url": url, "mode": "Automatic"}
+        pages[config.company] = {
+            "url": url,
+            "mode": "Limited" if type(source) is CareerPageSource else "Automatic",
+        }
     return pages
 
 
 def provider_catalog() -> list[ProviderInfo]:
     live = [
-        ProviderInfo(source.name, "Enabled", source.description) for source in enabled_sources()
+        ProviderInfo(
+            source.name,
+            "Limited" if type(source) is CareerPageSource else "Enabled",
+            source.description,
+        )
+        for source in enabled_sources()
     ]
     requested = [
         "LinkedIn Jobs",

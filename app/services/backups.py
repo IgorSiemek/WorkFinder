@@ -57,4 +57,4 @@ def automatic_backup(bind: Engine = engine) -> None:
         backup_database(bind)
     except (OSError, sqlite3.Error, SQLAlchemyError):
         # A failed backup must never undo a successfully saved application.
-        logger.exception("Automatic backup failed; use Settings to retry")
+        logger.exception("Automatic backup failed; use /backup or the backup CLI command to retry")

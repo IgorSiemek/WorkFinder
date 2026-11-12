@@ -3,13 +3,11 @@ from __future__ import annotations
 from datetime import datetime, timedelta
 from types import SimpleNamespace
 
-from fastapi.testclient import TestClient
 from sqlalchemy.orm import Session
 
-from app.database import get_session
-from app.main import app
 from app.models import Application, Job
 from app.services import progress
+from app.services.jobs import job_action, list_jobs
 
 
 def _job(title: str, age_days: int) -> Job:
@@ -39,55 +37,31 @@ def test_new_jobs_hide_applied_and_support_day_window(session: Session, monkeypa
     session.add(Application(job=applied, status="Applied"))
     session.commit()
 
-    def override_session():  # noqa: ANN202
-        yield session
+    jobs, total = list_jobs(session)
+    assert {job.title for job in jobs} == {"Recent Open Role", "Ignore From New"}
+    assert total == 2
+    jobs, _ = list_jobs(session, days=0, hide_applied=False)
+    assert {job.title for job in jobs} == {
+        "Recent Open Role",
+        "Ignore From New",
+        "Recent Applied Role",
+        "Older Open Role",
+    }
+    jobs, _ = list_jobs(session, "all", days=3, hide_applied=False)
+    assert len(jobs) == 3
+    job_action(session, ignore_from_new.id, "ignore")
+    session.commit()
+    assert "Ignore From New" not in {job.title for job in list_jobs(session)[0]}
+    calls = []
 
-    app.dependency_overrides[get_session] = override_session
-    try:
-        client = TestClient(app)
-        default_new = client.get("/jobs?view=new")
-        assert default_new.status_code == 200
-        assert "Recent Open Role" in default_new.text
-        assert "Ignore From New" in default_new.text
-        assert "Recent Applied Role" not in default_new.text
-        assert "Older Open Role" not in default_new.text
+    def fake_excel_sync(path, job, applied_on):
+        calls.append((path, job.id, applied_on))
+        return SimpleNamespace(created=False, row_number=4)
 
-        show_all = client.get("/jobs?view=new&hide_applied=0&days=0")
-        assert "Recent Applied Role" in show_all.text
-        assert "Older Open Role" in show_all.text
-
-        last_three_days = client.get("/jobs?days=3&hide_applied=0")
-        assert "Recent Open Role" in last_three_days.text
-        assert "Recent Applied Role" in last_three_days.text
-        assert "Older Open Role" not in last_three_days.text
-
-        ignored = client.post(
-            f"/actions/jobs/{ignore_from_new.id}/ignore",
-            data={"return_to": "/jobs?view=new&days=3"},
-            follow_redirects=False,
-        )
-        assert ignored.status_code == 303
-        assert ignored.headers["location"].startswith("/jobs?view=new&days=3&message=")
-        assert "Ignore From New" not in client.get("/jobs?view=new&days=3").text
-
-        calls = []
-
-        def fake_excel_sync(path, job, applied_on):  # noqa: ANN001, ANN202
-            calls.append((path, job.id, applied_on))
-            return SimpleNamespace(created=False, row_number=4)
-
-        monkeypatch.setattr(progress, "mark_applied_in_excel", fake_excel_sync)
-        monkeypatch.setattr(progress, "settings", SimpleNamespace(excel_jobs_path="test.xlsx"))
-        marked = client.post(
-            f"/actions/jobs/{recent.id}/mark-applied",
-            data={"return_to": "/jobs?view=new"},
-            follow_redirects=False,
-        )
-        assert marked.status_code == 303
-        session.expire_all()
-        assert recent.application is not None
-        assert recent.application.status == "Applied"
-        assert recent.application.date_applied is not None
-        assert len(calls) == 1
-    finally:
-        app.dependency_overrides.pop(get_session, None)
+    monkeypatch.setattr(progress, "mark_applied_in_excel", fake_excel_sync)
+    monkeypatch.setattr(progress, "settings", SimpleNamespace(excel_jobs_path="test.xlsx"))
+    job_action(session, recent.id, "apply")
+    progress.save_progress(session, recent.application)
+    assert recent.application.status == "Applied"
+    assert recent.application.date_applied is not None
+    assert len(calls) == 1

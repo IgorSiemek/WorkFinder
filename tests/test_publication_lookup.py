@@ -5,11 +5,8 @@ from datetime import UTC, date, datetime, timedelta
 
 import httpx
 import pytest
-from fastapi.testclient import TestClient
 from sqlalchemy.orm import Session
 
-from app.database import get_session
-from app.main import app
 from app.models import Job
 from app.scrapers.publication_dates import (
     PublicationDate,
@@ -221,20 +218,8 @@ def test_offer_retry_saves_date_and_displays_source_evidence(
 
     monkeypatch.setattr(publication_dates, "lookup_publication_date", lookup)
 
-    def override():  # noqa: ANN202
-        yield session
-
-    app.dependency_overrides[get_session] = override
-    try:
-        client = TestClient(app)
-        response = client.post(f"/actions/jobs/{job.id}/posting-date", follow_redirects=False)
-        assert response.status_code == 303
-        session.expire_all()
-        assert job.date_posted == date(2026, 9, 17)
-        detail = client.get(f"/jobs/{job.id}")
-        assert "17 Sep 2026" in detail.text
-        assert "JobPosting datePosted" in detail.text
-        assert "Date verified" in detail.text
-        assert "Find missing posting dates" in client.get("/settings").text
-    finally:
-        app.dependency_overrides.pop(get_session, None)
+    result = publication_dates.refresh_posting_dates(session, job_id=job.id, force=True)
+    session.expire_all()
+    assert result["verified"] == 1
+    assert job.date_posted == date(2026, 9, 17)
+    assert job.raw_payload["_publication_check"]["method"] == "JobPosting datePosted"

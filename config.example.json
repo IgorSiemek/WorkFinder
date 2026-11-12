@@ -1,0 +1,9 @@
+{
+  "version": 1,
+  "timezone": "Europe/Warsaw",
+  "search_times": ["09:00", "17:00"],
+  "reminder_time": "10:00",
+  "minimum_score": 60,
+  "page_size": 5,
+  "sources": []
+}

@@ -147,13 +147,15 @@ def import_posting(
     return job, "new"
 
 
-def run_search(session: Session) -> SearchRun:
+def run_search(session: Session, *, source_names: list[str] | None = None) -> SearchRun:
     started = time.monotonic()
     search_run = SearchRun()
     session.add(search_run)
     session.commit()
     profile = session.scalar(select(CandidateProfile).limit(1))
     sources = enabled_sources()
+    if source_names:
+        sources = [source for source in sources if source.name in source_names]
     configured_searches = session.scalars(
         select(SavedSearch).where(SavedSearch.enabled.is_(True))
     ).all()
@@ -205,7 +207,10 @@ def run_search(session: Session) -> SearchRun:
                 provider_run.jobs_found = len(postings)
                 if getattr(source, "can_confirm_absence", False):
                     successful.add(source.name)
-                elif not postings:
+                if getattr(source, "scan_complete", None) is False:
+                    provider_run.status = "partial"
+                    provider_run.error_message = getattr(source, "last_search_note", None)
+                elif not postings and not getattr(source, "scan_complete", False):
                     provider_run.status = "unverified"
                     provider_run.error_message = (
                         "No parseable matches; this monitor cannot confirm that old offers expired"
@@ -220,6 +225,12 @@ def run_search(session: Session) -> SearchRun:
                         detail="Outside internship scope",
                     )
                     session.add(observation)
+                    if posting.raw_payload.get("talent_pool"):
+                        observation.outcome = "excluded_talent_pool"
+                        observation.detail = (
+                            "Employer advertises future opportunities, not a confirmed vacancy"
+                        )
+                        continue
                     if not is_internship_role(
                         posting.title, posting.employment_type, posting.seniority
                     ):

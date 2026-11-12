@@ -44,9 +44,16 @@ def record(session: Session, application: Application, kind: str, description: s
     )
 
 
-def change_status(session: Session, job: Job, status: str) -> Application:
+def change_status(
+    session: Session,
+    job: Job,
+    status: str,
+    *,
+    today: date | None = None,
+) -> Application:
     if status not in APPLICATION_STATUSES:
         raise ValueError("Invalid application status")
+    today = today or date.today()
     application = job.application
     if application is None:
         application = Application(job=job, status="Saved")
@@ -65,7 +72,7 @@ def change_status(session: Session, job: Job, status: str) -> Application:
         application.date_applied = utcnow()
         application.application_url = job.original_url
         if application.next_action_date is None:
-            application.next_action_date = date.today() + timedelta(days=7)
+            application.next_action_date = today + timedelta(days=7)
             record(
                 session,
                 application,
@@ -87,9 +94,9 @@ def change_status(session: Session, job: Job, status: str) -> Application:
                     )
                 )
     if status == "Offer" and application.offer_date is None:
-        application.offer_date = date.today()
+        application.offer_date = today
     if status == "Rejected" and application.rejection_date is None:
-        application.rejection_date = date.today()
+        application.rejection_date = today
     return application
 
 
@@ -142,5 +149,5 @@ def save_progress(session: Session, application: Application) -> str:
     _, pending = retry_excel_sync(session, application_id=application.id)
     automatic_backup(session.get_bind())
     return (
-        "Saved in database; Excel sync pending (retry in Settings)" if pending else "Progress saved"
+        "Saved in database; Excel sync pending (retry with /excel)" if pending else "Progress saved"
     )

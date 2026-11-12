@@ -41,7 +41,8 @@ def test_legacy_database_upgrade_preserves_data_and_is_repeatable(tmp_path, monk
     old_tables = [
         table
         for table in Base.metadata.sorted_tables
-        if table.name not in {"excel_sync_tasks", "search_observations"}
+        if table.name
+        not in {"excel_sync_tasks", "search_observations", "bot_state", "bot_messages"}
     ]
     Base.metadata.create_all(bind, tables=old_tables)
     with Session(bind) as session:
@@ -84,7 +85,7 @@ def test_legacy_database_upgrade_preserves_data_and_is_repeatable(tmp_path, monk
             )
             assert (
                 connection.scalar(text("SELECT version_num FROM alembic_version"))
-                == "20261016_0003"
+                == "20261111_0004"
             )
             assert connection.scalar(text("SELECT date_posted FROM jobs")) is None
             assert "Existing note" in connection.scalar(text("SELECT notes FROM jobs"))

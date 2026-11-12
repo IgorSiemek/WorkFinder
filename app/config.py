@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import os
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
@@ -30,6 +30,10 @@ class Settings:
     user_agent: str = os.getenv("USER_AGENT", "WorkFinder/1.0 (personal local job search tool)")
     excel_jobs_path: str = os.getenv("EXCEL_JOBS_PATH", "")
     backup_dir: str = os.getenv("BACKUP_DIR", "data/backups")
+    config_path: str = os.getenv("WORKFINDER_CONFIG", "data/config.json")
+    telegram_token: str = field(default=os.getenv("TELEGRAM_BOT_TOKEN", ""), repr=False)
+    telegram_user_id: str = os.getenv("TELEGRAM_USER_ID", "")
+    build_ref: str = os.getenv("APP_BUILD_REF", "local")
 
 
 settings = Settings()

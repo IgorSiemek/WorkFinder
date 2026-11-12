@@ -10,3 +10,5 @@ data/*.sqlite*
 data/backups/
 data/*.db-*
 logs/
+data/config*.json
+data/workfinder.lock

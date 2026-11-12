@@ -1,7 +1,0 @@
-{% extends "base.html" %}
-{% block title %}Add job · WorkFinder{% endblock %}
-{% block breadcrumb %}<a href="/jobs">Jobs</a><span>/</span>Add manually{% endblock %}
-{% block content %}
-<section class="page-heading"><p class="eyebrow">MANUAL IMPORT</p><h1>Add a Kraków internship</h1><p>Add a public internship, traineeship or student placement in Polish or English. It passes through the same matching and duplicate checks.</p></section>
-<section class="panel narrow"><form action="/actions/manual-job" method="post" class="form-grid"><label>Job title<input name="title" required placeholder="Financial Analyst Intern"></label><label>Company<input name="company" required placeholder="Company name"></label><label class="span-2">Original URL<input type="url" name="url" required placeholder="https://company.example/careers/job"></label><label>Work model<select name="remote_type"><option>On-site</option><option selected>Hybrid</option></select></label><label>Employment type<select name="employment_type"><option selected>Not specified</option><option>Internship</option><option>Traineeship</option><option>Apprenticeship</option><option>Student program</option></select></label><label class="span-2">Description<textarea name="description" rows="10" placeholder="Paste the public job description here…"></textarea></label><div class="span-2 button-row"><button class="button primary" type="submit">Add and score job</button><a href="/jobs" class="button ghost">Cancel</a></div></form></section>
-{% endblock %}

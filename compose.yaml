@@ -1,0 +1,30 @@
+name: workfinder
+services:
+  workfinder:
+    image: workfinder:${APP_BUILD_REF:-local}
+    build:
+      context: .
+      args:
+        VCS_REF: ${APP_BUILD_REF:-local}
+    restart: unless-stopped
+    init: true
+    stop_grace_period: 2m
+    env_file: .env
+    environment:
+      DATABASE_URL: sqlite:////app/data/workfinder.db
+      WORKFINDER_CONFIG: /app/data/config.json
+      BACKUP_DIR: /app/data/backups
+      APP_BUILD_REF: ${APP_BUILD_REF:-local}
+    volumes:
+      - ./data:/app/data
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+        max-file: "3"
+    healthcheck:
+      test: ["CMD", "python", "-m", "app.cli", "healthcheck"]
+      interval: 15s
+      timeout: 5s
+      start_period: 30s
+      retries: 4

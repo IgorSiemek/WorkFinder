@@ -82,3 +82,43 @@ def test_empty_monitor_is_recorded_as_unverified(
     provider = session.scalar(select(ProviderRun))
     assert provider.status == "unverified"
     assert "cannot confirm" in provider.error_message
+
+
+def test_talent_pools_are_audited_but_not_imported(session, monkeypatch) -> None:  # noqa: ANN001
+    class Provider:
+        name = "Cisco Careers"
+        scan_complete = True
+
+        def search_jobs(self, criteria):  # noqa: ANN001, ANN202
+            return [
+                JobPosting(
+                    source=self.name,
+                    source_job_id="1",
+                    title="Finance Intern",
+                    company="Cisco",
+                    location="Krakow",
+                    url="https://example.com/job/1",
+                    raw_payload={"talent_pool": True},
+                )
+            ]
+
+    monkeypatch.setattr(search, "enabled_sources", lambda: [Provider()])
+    result = search.run_search(session)
+    assert result.jobs_found == result.new_jobs == 0
+    observation = session.scalar(select(SearchObservation))
+    assert observation.outcome == "excluded_talent_pool" and observation.job_id is None
+
+
+def test_incomplete_scan_is_visible_in_provider_history(session, monkeypatch) -> None:  # noqa: ANN001
+    class Provider:
+        name = "Incomplete"
+        scan_complete = False
+        last_search_note = "Employer pagination incomplete"
+
+        def search_jobs(self, criteria):  # noqa: ANN001, ANN202
+            return []
+
+    monkeypatch.setattr(search, "enabled_sources", lambda: [Provider()])
+    search.run_search(session)
+    provider = session.scalar(select(ProviderRun))
+    assert provider.status == "partial" and "incomplete" in provider.error_message

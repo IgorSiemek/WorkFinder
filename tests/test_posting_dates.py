@@ -2,14 +2,13 @@ from __future__ import annotations
 
 from datetime import date, datetime, timedelta
 
-from fastapi.testclient import TestClient
 from sqlalchemy.orm import Session
 
-from app.database import get_session
-from app.main import app
 from app.models import Job
 from app.scrapers.base import JobPosting
+from app.services.jobs import list_jobs
 from app.services.search import import_posting
+from app.telegram.views import job_card
 
 
 def test_discovery_and_employer_posting_dates_are_separate(session: Session) -> None:
@@ -40,33 +39,16 @@ def test_discovery_and_employer_posting_dates_are_separate(session: Session) -> 
     session.add_all(jobs)
     session.commit()
 
-    def override():  # noqa: ANN202
-        yield session
-
-    app.dependency_overrides[get_session] = override
-    try:
-        client = TestClient(app)
-        found = client.get("/jobs?view=new")
-        assert "Older Finance Intern" in found.text
-        assert "FOUND TODAY" in found.text
-        assert "NEW TODAY" not in found.text
-        assert "Employer posting date unavailable" in found.text
-        assert (today - timedelta(days=29)).strftime("%d %b %Y") in found.text
-        recent = client.get("/jobs?posted_days=7")
-        assert {job.title for job in recent.context["jobs"]} == {
-            "Recent Finance Intern",
-            "Today Finance Intern",
-        }
-        only_today = client.get("/jobs?posted_days=1")
-        assert [job.title for job in only_today.context["jobs"]] == ["Today Finance Intern"]
-        sorted_jobs = client.get("/jobs?sort=posted").context["jobs"]
-        assert sorted_jobs[0].title == "Today Finance Intern"
-        assert sorted_jobs[-1].title == "Unknown Finance Intern"
-        detail = client.get(f"/jobs/{jobs[0].id}")
-        assert "Employer posted" in detail.text and "Found by WorkFinder" in detail.text
-        assert "Found today" in client.get("/").text
-    finally:
-        app.dependency_overrides.pop(get_session, None)
+    found, _ = list_jobs(session)
+    assert "Older Finance Intern" in {job.title for job in found}
+    card = job_card(jobs[0])["text"]
+    assert f"Publikacja {today - timedelta(days=29)}" in card
+    assert "Znaleziono" in card
+    assert "brak daty" in job_card(jobs[3])["text"]
+    recent, _ = list_jobs(session, "all", posted_days=7)
+    assert {job.title for job in recent} == {"Recent Finance Intern", "Today Finance Intern"}
+    only_today, _ = list_jobs(session, "all", posted_days=1)
+    assert [job.title for job in only_today] == ["Today Finance Intern"]
 
 
 def test_repeat_import_enriches_posting_date_without_changing_discovery(session: Session) -> None:

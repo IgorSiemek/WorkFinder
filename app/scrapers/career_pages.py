@@ -17,16 +17,21 @@ ANCHOR_PATTERN = re.compile(
     re.IGNORECASE | re.DOTALL,
 )
 KRAKOW_TERMS = ("kraków", "krakow", "cracow")
-BLOCK_START_PATTERN = re.compile(r"<(?:li|tr|article|section)\b", re.IGNORECASE)
-BLOCK_END_PATTERN = re.compile(r"</(?:li|tr|article|section)>", re.IGNORECASE)
+BLOCK_PATTERN = re.compile(r"<(/?)(li|tr|article|section)\b[^>]*>", re.IGNORECASE)
 
 
 def _nearby_html(html: str, start: int, end: int) -> str:
-    starts = list(BLOCK_START_PATTERN.finditer(html, max(0, start - 4000), start))
-    block_end = BLOCK_END_PATTERN.search(html, end, min(len(html), end + 4000))
-    if starts and block_end:
-        return html[starts[-1].start() : block_end.end()]
-    return html[max(0, start - 700) : end + 700]
+    stack: list[tuple[str, int]] = []
+    for token in BLOCK_PATTERN.finditer(html):
+        closing, tag = token.groups()
+        tag = tag.casefold()
+        if not closing:
+            stack.append((tag, token.start()))
+        elif stack and stack[-1][0] == tag:
+            _, block_start = stack.pop()
+            if block_start <= start and token.end() >= end:
+                return html[block_start : token.end()]
+    return ""  # Nearby offers or a page-wide Kraków filter are not location evidence.
 
 
 @dataclass(frozen=True, slots=True)
@@ -68,11 +73,22 @@ class CareerPageSource(JobSource):
                 for marker in ("job", "career", "pipeline", "project")
             ):
                 continue
-            nearby = plain_text(_nearby_html(html, match.start(), match.end()))
-            combined = f"{title} {nearby}".casefold()
-            if not self.config.trusted_location_filter and not any(
-                term in combined for term in KRAKOW_TERMS
+            card = _nearby_html(html, match.start(), match.end())
+            # A container with several offers is not a location for this particular offer.
+            if (
+                len(
+                    {
+                        m[1]
+                        for m in ANCHOR_PATTERN.finditer(card)
+                        if is_internship_role(plain_text(m[2]))
+                    }
+                )
+                > 1
             ):
+                continue
+            nearby = plain_text(card)
+            combined = f"{title} {nearby}".casefold()
+            if not any(term in nearby.casefold() for term in KRAKOW_TERMS):
                 continue
             if keywords and not any(keyword in combined for keyword in keywords):
                 continue

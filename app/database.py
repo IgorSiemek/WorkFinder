@@ -1,10 +1,9 @@
 from __future__ import annotations
 
-from collections.abc import Generator
 from pathlib import Path
 
 from sqlalchemy import create_engine, event
-from sqlalchemy.orm import DeclarativeBase, Session, sessionmaker
+from sqlalchemy.orm import DeclarativeBase, sessionmaker
 
 from app.config import PROJECT_ROOT, settings
 
@@ -44,11 +43,6 @@ def _enable_sqlite_foreign_keys(dbapi_connection: object, _: object) -> None:
         cursor.execute("PRAGMA busy_timeout=30000")
         cursor.execute("PRAGMA synchronous=FULL")
         cursor.close()
-
-
-def get_session() -> Generator[Session, None, None]:
-    with SessionLocal() as session:
-        yield session
 
 
 def init_database() -> None:

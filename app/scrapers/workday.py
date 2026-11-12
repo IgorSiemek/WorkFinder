@@ -53,6 +53,8 @@ class WorkdaySource(JobSource):
 
     def search_jobs(self, criteria: SearchCriteria) -> list[JobPosting]:
         self.can_confirm_absence = False
+        self.scan_complete = False
+        missing_locations = False
         jobs: list[JobPosting] = []
         seen_paths: set[str] = set()
         keywords = [keyword.casefold() for keyword in criteria.keywords]
@@ -82,17 +84,29 @@ class WorkdaySource(JobSource):
                 if not is_internship_role(title):
                     continue
                 location = plain_text(item.get("locationsText"))
-                text = f"{title} {location}".casefold()
                 path = str(item.get("externalPath") or "")
                 if not path or path in seen_paths:
                     continue
                 seen_paths.add(path)
+                details = self.posting_details(path)
+                locations = [location, plain_text(details.get("location"))]
+                for additional in details.get("additionalLocations") or []:
+                    if isinstance(additional, str):
+                        locations.append(additional)
+                    elif isinstance(additional, dict):
+                        locations.append(plain_text(additional.get("location")))
+                location = "; ".join(dict.fromkeys(x for x in locations if x))
+                if not details and "locations" in location.casefold():
+                    missing_locations = True
+                description = plain_text(details.get("jobDescription"))
+                text = f"{title} {location} {description}".casefold()
+                remote_type = plain_text(details.get("remoteType"))
+                remote = remote_type.casefold() in {"remote", "remote only"}
                 if keywords and not any(keyword in text for keyword in keywords):
                     continue
-                if not relevant_to_krakow(location, "", remote=False):
+                if not relevant_to_krakow(location, "", remote=remote):
                     continue
                 url = f"https://{self.config.host}/en-US/{self.config.site}{path}"
-                details = self.posting_details(path)
                 posted = source_date(details.get("startDate"))
                 evidence = date_evidence(
                     PublicationDate(posted, "Workday startDate", str(details.get("startDate")))
@@ -107,11 +121,12 @@ class WorkdaySource(JobSource):
                         url=url,
                         title=title,
                         company=self.config.company,
-                        location=location or "Kraków",
-                        remote_type="Hybrid" if "hybrid" in text else "On-site",
+                        location=location,
+                        remote_type="Hybrid" if "hybrid" in remote_type.casefold() else "On-site",
                         employment_type=plain_text(details.get("timeType")) or "Not specified",
                         date_posted=posted,
-                        description=(
+                        description=description
+                        or (
                             f"Official {self.config.company} listing. "
                             f"{title}. Location: {location}."
                         ),
@@ -122,4 +137,11 @@ class WorkdaySource(JobSource):
             if total is not None and offset >= total:
                 self.can_confirm_absence = True
                 break
+        self.can_confirm_absence = self.can_confirm_absence and not missing_locations
+        self.scan_complete = self.can_confirm_absence
+        self.last_search_note = (
+            ""
+            if self.scan_complete
+            else "Result limit reached or multi-location details unavailable"
+        )
         return jobs
