@@ -1,10 +1,13 @@
 from __future__ import annotations
 
-from datetime import UTC, date
+import hashlib
+import secrets
+from datetime import UTC, date, datetime, timedelta
 from html import escape
 from zoneinfo import ZoneInfo
 
 from sqlalchemy import func, select
+from sqlalchemy import update as sql_update
 from sqlalchemy.orm import Session
 
 from app.models import ApplicationActivity, BotMessage, BotState, SearchRun, utcnow
@@ -50,23 +53,143 @@ Przycisk „Aplikacja wysłana” zapisuje Twój status po wysłaniu zgłoszenia
 
 
 class BotController:
-    def __init__(self, owner_id: int, config: dict, *, bot_id: int = 1):
+    def __init__(
+        self,
+        owner_id: int,
+        config: dict,
+        *,
+        bot_id: int = 1,
+        administrator_id: int | None = None,
+        bot_username: str = "",
+    ):
         self.owner_id = owner_id
         self.config = config
+        self.bot_id = bot_id
+        self.bot_username = bot_username
+        self.administrator_id = administrator_id or owner_id
         self.scope = f"{bot_id}:{owner_id}"
+        self.admin_scope = f"{bot_id}:{self.administrator_id}"
 
-    def state(self, session: Session, key: str, default=None):  # noqa: ANN001, ANN201
-        row = session.get(BotState, f"{self.scope}:{key}")
+    def state(
+        self,
+        session: Session,
+        key: str,
+        default=None,
+        *,
+        scope: str | None = None,
+    ):  # noqa: ANN001, ANN201
+        row = session.get(BotState, f"{scope or self.scope}:{key}")
         return row.value if row else default
 
-    def set_state(self, session: Session, key: str, value) -> None:  # noqa: ANN001
-        name = f"{self.scope}:{key}"
+    def set_state(
+        self,
+        session: Session,
+        key: str,
+        value,
+        *,
+        scope: str | None = None,
+    ) -> None:  # noqa: ANN001
+        name = f"{scope or self.scope}:{key}"
         row = session.get(BotState, name)
         if row is None:
             session.add(BotState(key=name, value=value))
         else:
             row.value = value
         session.flush()
+
+    def for_user(self, user_id: int) -> BotController:
+        if user_id == self.owner_id:
+            return self
+        return BotController(
+            user_id,
+            self.config,
+            bot_id=self.bot_id,
+            administrator_id=self.administrator_id,
+            bot_username=self.bot_username,
+        )
+
+    def allowed_user_ids(self, session: Session) -> list[int]:
+        members = self.state(session, "members", [], scope=self.admin_scope)
+        return [
+            self.administrator_id,
+            *sorted(
+                {
+                    value
+                    for value in members
+                    if type(value) is int and value > 0 and value != self.administrator_id
+                }
+            ),
+        ]
+
+    def create_invite(self, session: Session) -> dict:
+        if self.owner_id != self.administrator_id:
+            raise ValueError("Zaproszenia tworzy administrator bota.")
+        if not self.bot_username:
+            raise ValueError("Nazwa bota będzie dostępna po uruchomieniu połączenia z Telegramem.")
+        token = secrets.token_urlsafe(24)
+        self.set_state(
+            session,
+            "invite",
+            {
+                "digest": hashlib.sha256(token.encode()).hexdigest(),
+                "expires_at": (utcnow() + timedelta(hours=24)).isoformat(),
+            },
+        )
+        url = f"https://t.me/{self.bot_username}?start=join_{token}"
+        return {
+            "text": (
+                "<b>Zaproszenie do WorkFinder</b>\n"
+                "Przekaż ten link osobie, z którą chcesz dzielić profil, "
+                "oferty i historię aplikacji.\n"
+                "Zaproszenie jest jednorazowe i ważne przez 24 godziny.\n\n" + url
+            ),
+            "reply_markup": {
+                "inline_keyboard": [
+                    [
+                        {
+                            "text": "Otwórz zaproszenie",
+                            "url": url,
+                        }
+                    ]
+                ]
+            },
+        }
+
+    def claim_invite(self, session: Session, incoming: dict) -> bool:
+        message = incoming.get("message", {})
+        user_id = message.get("from", {}).get("id")
+        chat = message.get("chat", {})
+        command, _, argument = message.get("text", "").strip().partition(" ")
+        if not (
+            type(user_id) is int
+            and user_id > 0
+            and chat.get("type") == "private"
+            and chat.get("id") == user_id
+            and command.split("@")[0].lower() == "/start"
+            and argument.startswith("join_")
+        ):
+            return False
+        invite = self.state(session, "invite")
+        if not invite or datetime.fromisoformat(invite["expires_at"]) <= utcnow():
+            return False
+        digest = hashlib.sha256(argument.removeprefix("join_").encode()).hexdigest()
+        if not secrets.compare_digest(digest, invite["digest"]):
+            return False
+        members = set(self.allowed_user_ids(session)) | {user_id}
+        members.discard(self.administrator_id)
+        self.set_state(session, "members", sorted(members))
+        self.set_state(session, "invite", None)
+        self.for_user(user_id).set_state(session, "started_at", utcnow().isoformat())
+        self.queue(
+            session,
+            f"member:{incoming['update_id']}",
+            {
+                "text": f"Do wspólnego WorkFinder dołączyło konto {user_id}. "
+                "Dostęp sprawdzisz pod /members.",
+            },
+        )
+        session.commit()
+        return True
 
     def queue(
         self,
@@ -131,6 +254,34 @@ class BotController:
         command = head.split("@")[0].lower()
         command = command.removeprefix("/")
         argument = argument.strip()
+        if command in {"invite", "members", "revoke"}:
+            if self.owner_id != self.administrator_id:
+                raise ValueError("Dostępem do bota zarządza administrator.")
+            if command == "invite":
+                return [self.create_invite(session)]
+            if command == "members":
+                return [
+                    {
+                        "text": "<b>Konta ze wspólnym dostępem</b>\n"
+                        + "\n".join(f"{user_id}" for user_id in self.allowed_user_ids(session))
+                        + "\n\n/revoke ID odbiera dostęp wybranemu kontu."
+                    }
+                ]
+            user_id = int(argument)
+            if user_id == self.administrator_id:
+                raise ValueError("To konto administratora bota.")
+            members = set(self.allowed_user_ids(session)) - {self.administrator_id}
+            members.discard(user_id)
+            self.set_state(session, "members", sorted(members))
+            session.execute(
+                sql_update(BotMessage)
+                .where(
+                    BotMessage.dedup_key.startswith(f"{self.bot_id}:{user_id}:"),
+                    BotMessage.status == "pending",
+                )
+                .values(status="cancelled")
+            )
+            return [{"text": f"Dostęp konta {user_id} został odebrany."}]
         if command == "start":
             if not self.state(session, "started_at"):
                 self.set_state(session, "started_at", utcnow().isoformat())
@@ -141,7 +292,13 @@ class BotController:
                 }
             ]
         if command == "help":
-            return [{"text": HELP}]
+            text = HELP
+            if self.owner_id == self.administrator_id:
+                text += (
+                    "\n\n/invite — zaproś osobę do wspólnego profilu"
+                    "\n/members — konta z dostępem\n/revoke ID — odbierz dostęp"
+                )
+            return [{"text": text}]
         views = {
             "new": "new",
             "all": "all",
@@ -163,7 +320,7 @@ class BotController:
             return [
                 {
                     "text": "Wyszukiwanie trwa."
-                    if self.state(session, "search_running")
+                    if self.state(session, "search_running", scope=self.admin_scope)
                     else "Wyszukiwanie zaplanowane. Wynik dostaniesz po zakończeniu."
                 }
             ]
@@ -224,7 +381,7 @@ class BotController:
             self.set_state(session, f"{command}_requested", value)
             return [{"text": "Zadanie zaplanowane. Wynik dostaniesz po zakończeniu."}]
         if command == "reload":
-            if self.state(session, "search_running"):
+            if self.state(session, "search_running", scope=self.admin_scope):
                 raise ValueError("Wczytaj konfigurację ponownie po zakończeniu wyszukiwania.")
             # Runtime loads the file and swaps the config after committing database changes.
             self.set_state(session, "reload_requested", True)

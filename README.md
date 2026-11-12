@@ -54,12 +54,15 @@ Karty ofert mają przyciski otwarcia oferty, zapisania, pominięcia i oznaczenia
 | `/add Tytuł stażu \| Firma \| https://link \| Hybrid \| Opis` | Ręczne dodanie stażu w Krakowie |
 | `/delivery 12` | Ponowienie wskazanej nieudanej wiadomości |
 | `/help` | Lista poleceń |
+| `/invite`, `/members`, `/revoke ID` | Zaproszenie, lista kont i odebranie dostępu przez administratora |
 
 `data/config.json` można edytować ręcznie lub agentem. `config.example.json` pokazuje ustawienia harmonogramu. Wygenerowany plik zawiera też sekcje `profile`, `searches`, `companies`, `ignore_rules` i `cv_versions`. Pominięta sekcja korzysta z ustawień bazy. Pusta lista wyłącza jej istniejące wpisy. `sources: []` włącza wszystkie dostępne źródła, a lista nazw ogranicza wyszukiwanie do wskazanych providerów. Nazwy znajdziesz pod `/config`.
 
 Po edycji sprawdź plik poleceniem `python -m app.cli check-config`, następnie wyślij `/reload`. Bot zatwierdza konfigurację w całości przed zmianą profilu i przeliczeniem ocen. Gdy trwa wyszukiwanie, ponów `/reload` po jego zakończeniu. Token i identyfikator konta są ustawiane w `.env` i wymagają restartu procesu.
 
-Bot obsługuje prywatną rozmowę z kontem wskazanym w `TELEGRAM_USER_ID`. Cursor odebranych zdarzeń, zmiany aplikacji i odpowiedzi są zapisywane transakcyjnie. Wiadomości oczekujące są przechowywane w SQLite. Powiadomienia o nowych ofertach dotyczą wpisów znalezionych od pierwszego `/start`. Starsze oferty są dostępne przez listy.
+`TELEGRAM_USER_ID` wskazuje administratora bota. Aby udostępnić istniejący profil, oferty i historię aplikacji, administrator wysyła `/invite` i przekazuje otrzymany link drugiej osobie. Na telefonie wystarczy otworzyć link w Telegramie i nacisnąć Start. Zaproszenie jest jednorazowe, ważne 24 godziny, a kolejne `/invite` zastępuje poprzedni link. `/members` pokazuje konta z dostępem, a `/revoke ID` odbiera dostęp wybranej osobie.
+
+Każde konto ma własną rozmowę, kolejkę wiadomości i ustawienie `/pause` lub `/resume`. Zapisane oferty, statusy, notatki, wersje CV i historia rekrutacji są wspólne. Wyszukiwanie według harmonogramu jest wykonywane raz dla całego profilu. Każde konto dostaje własne powiadomienia od chwili dołączenia. Starsze oferty są dostępne przez listy. Odebrane zdarzenia, zmiany aplikacji i odpowiedzi są przechowywane w SQLite z ochroną przed ponownym wykonaniem tego samego polecenia.
 
 Po utracie potwierdzenia wysyłki wiadomość otrzymuje status `uncertain`, widoczny pod `/health`. Możesz sprawdzić rozmowę i ponowić ją przez `/delivery ID`. Ponowienie takiej wiadomości może utworzyć kopię. Błędy połączenia przed wysłaniem i odpowiedzi ograniczające tempo są ponawiane automatycznie.
 

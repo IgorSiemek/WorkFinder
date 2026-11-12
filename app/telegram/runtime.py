@@ -87,36 +87,42 @@ class BotRuntime:
         self.controller = controller
         self.search_task: asyncio.Task | None = None
 
+    def controllers(self, session) -> list[BotController]:  # noqa: ANN001
+        return [
+            self.controller.for_user(user_id)
+            for user_id in self.controller.allowed_user_ids(session)
+        ]
+
+    def notify_search(self, session, key: str, text: str) -> None:  # noqa: ANN001
+        requesters = self.controller.state(session, "search_requesters", [])
+        for recipient in self.controllers(session):
+            if recipient.state(session, "started_at") and (
+                recipient.owner_id in requesters or not recipient.state(session, "paused")
+            ):
+                recipient.queue(session, key, {"text": text})
+
     def search(self) -> None:
         controller = self.controller
         with SessionLocal() as session:
             try:
                 result = run_search(session, source_names=controller.config["sources"])
-                if controller.state(session, "search_manual") or not controller.state(
-                    session, "paused"
-                ):
-                    controller.queue(
-                        session,
-                        f"search:{result.id}",
-                        {
-                            "text": (
-                                "<b>Wyszukiwanie zakończone</b>\n"
-                                f"Nowych ofert · {result.new_jobs}\n"
-                                f"Znalezionych · {result.jobs_found}\n"
-                                f"Błędów źródeł · {result.errors}\n"
-                                "Przeglądaj pod /new. Stan źródeł pod /health."
-                            )
-                        },
-                    )
+                self.notify_search(
+                    session,
+                    f"search:{result.id}",
+                    (
+                        "<b>Wyszukiwanie zakończone</b>\n"
+                        f"Nowych ofert · {result.new_jobs}\nZnalezionych · {result.jobs_found}\n"
+                        f"Błędów źródeł · {result.errors}\n"
+                        "Przeglądaj pod /new. Stan źródeł pod /health."
+                    ),
+                )
             except Exception:
                 session.rollback()
                 logger.exception("Search failed")
-                controller.queue(
+                self.notify_search(
                     session,
                     f"search-error:{utcnow().isoformat()}",
-                    {
-                        "text": "Wyszukiwanie przerwane. Sprawdź /health i logi procesu.",
-                    },
+                    "Wyszukiwanie przerwane. Sprawdź /health i logi procesu.",
                 )
             finally:
                 controller.set_state(session, "search_running", False)
@@ -128,22 +134,38 @@ class BotRuntime:
         controller = self.controller
         with SessionLocal() as session:
             now = utcnow()
-            if controller.state(session, "reload_requested") and not self.search_task:
+            recipients = self.controllers(session)
+            reloads = [member for member in recipients if member.state(session, "reload_requested")]
+            if reloads and not self.search_task:
                 try:
                     controller.reload(session)
+                    for member in reloads:
+                        member.set_state(session, "reload_requested", False)
+                        if member.owner_id != controller.owner_id:
+                            member.queue(
+                                session,
+                                f"reload:{now.isoformat()}",
+                                {
+                                    "text": "Konfiguracja wczytana.",
+                                },
+                            )
+                    session.commit()
                 except (ValueError, OSError) as exc:
                     session.rollback()
-                    controller.set_state(session, "reload_requested", False)
-                    controller.queue(
-                        session,
-                        f"reload-error:{now.isoformat()}",
-                        {
-                            "text": "Błąd konfiguracji · " + escape(str(exc)[:1000]),
-                        },
-                    )
+                    for member in reloads:
+                        member.set_state(session, "reload_requested", False)
+                        member.queue(
+                            session,
+                            f"reload-error:{now.isoformat()}",
+                            {
+                                "text": "Błąd konfiguracji · " + escape(str(exc)[:1000]),
+                            },
+                        )
                     session.commit()
-            queue_notifications(session, controller, now)
-            if not controller.state(session, "started_at"):
+            recipients = self.controllers(session)
+            for member in recipients:
+                queue_notifications(session, member, now)
+            if not any(member.state(session, "started_at") for member in recipients):
                 return False
             due = controller.state(session, "next_search")
             if due is None:
@@ -152,54 +174,70 @@ class BotRuntime:
                     session, "next_search", next_due.isoformat() if next_due else None
                 )
             scheduled = due is not None and datetime.fromisoformat(due) <= now
-            requested = controller.state(session, "search_requested", False)
+            requesters = [
+                member.owner_id
+                for member in recipients
+                if member.state(session, "search_requested", False)
+            ]
+            requested = bool(requesters)
             start = (scheduled or requested) and self.search_task is None
             if start:
                 controller.set_state(session, "search_requested", False)
                 controller.set_state(session, "search_running", True)
                 controller.set_state(session, "search_started", now.isoformat())
                 controller.set_state(session, "search_manual", bool(requested))
+                controller.set_state(session, "search_requesters", requesters)
             elif requested and self.search_task:
                 # Repeated taps during an active search coalesce into that search.
                 controller.set_state(session, "search_requested", False)
+                previous = controller.state(session, "search_requesters", [])
+                controller.set_state(
+                    session, "search_requesters", sorted(set(previous + requesters))
+                )
+            for member in recipients:
+                if member.owner_id in requesters:
+                    member.set_state(session, "search_requested", False)
             session.commit()
             return start
 
     def maintenance(self) -> None:
-        controller = self.controller
         with SessionLocal() as session:
             retry_excel_sync(session)
-            for command in ("backup", "excel", "dates"):
-                value = controller.state(session, f"{command}_requested")
-                if not value:
-                    continue
-                try:
-                    if command == "backup":
-                        path = backup_database(force=True)
-                        text = f"Backup zapisany · {path.name if path else 'brak pliku bazy'}"
-                    elif command == "excel":
-                        done, pending = retry_excel_sync(session)
-                        text = f"Excel · zapisano {done}, oczekuje {pending}"
-                    else:
-                        result = refresh_posting_dates(session, job_id=value, force=True)
-                        text = (
-                            f"Data publikacji · potwierdzone {result['verified']}, "
-                            f"szacowane {result['relative']}, niedostępne {result['unknown']}"
-                        )
-                except Exception:
-                    session.rollback()
-                    logger.exception("Maintenance failed: %s", command)
-                    text = f"Zadanie {command} przerwane. Szczegóły w logach."
-                controller.set_state(session, f"{command}_requested", False)
-                controller.queue(
-                    session,
-                    f"task:{command}:{utcnow().isoformat()}",
-                    {
-                        "text": escape(text),
-                    },
-                )
-                session.commit()
+            for member in self.controllers(session):
+                self.maintain_member(session, member)
             automatic_backup()
+
+    def maintain_member(self, session, controller: BotController) -> None:  # noqa: ANN001
+        for command in ("backup", "excel", "dates"):
+            value = controller.state(session, f"{command}_requested")
+            if not value:
+                continue
+            try:
+                if command == "backup":
+                    path = backup_database(force=True)
+                    text = f"Backup zapisany · {path.name if path else 'brak pliku bazy'}"
+                elif command == "excel":
+                    done, pending = retry_excel_sync(session)
+                    text = f"Excel · zapisano {done}, oczekuje {pending}"
+                else:
+                    result = refresh_posting_dates(session, job_id=value, force=True)
+                    text = (
+                        f"Data publikacji · potwierdzone {result['verified']}, "
+                        f"szacowane {result['relative']}, niedostępne {result['unknown']}"
+                    )
+            except Exception:
+                session.rollback()
+                logger.exception("Maintenance failed: %s", command)
+                text = f"Zadanie {command} przerwane. Szczegóły w logach."
+            controller.set_state(session, f"{command}_requested", False)
+            controller.queue(
+                session,
+                f"task:{command}:{utcnow().isoformat()}",
+                {
+                    "text": escape(text),
+                },
+            )
+            session.commit()
 
     async def poll(self) -> None:
         while True:
@@ -215,21 +253,45 @@ class BotRuntime:
                 self.controller.set_state(session, "last_poll", utcnow().isoformat())
                 session.commit()
             for update in updates:
-                await asyncio.to_thread(self.handle_update, update)
+                authorized = await asyncio.to_thread(self.handle_update, update)
                 callback = update.get("callback_query")
-                if callback and self.controller.authorized(update):
+                if callback and authorized:
                     with suppress(TelegramError, httpx.HTTPError):
                         await self.client.call(
                             "answerCallbackQuery", callback_query_id=callback["id"]
                         )
 
-    def handle_update(self, update: dict) -> None:
+    def handle_update(self, update: dict) -> bool:
         with SessionLocal() as session:
-            self.controller.handle(session, update)
+            controller = self.controller
+            if update["update_id"] < controller.state(session, "offset", 0):
+                return False
+            callback = update.get("callback_query")
+            message = callback if callback else update.get("message", {})
+            user_id = message.get("from", {}).get("id")
+            if user_id not in controller.allowed_user_ids(session):
+                if not controller.claim_invite(session, update):
+                    controller.set_state(session, "offset", update["update_id"] + 1)
+                    session.commit()
+                    return False
+                recover_delivery(session, controller.for_user(user_id))
+            member = controller.for_user(user_id)
+            if not member.authorized(update):
+                controller.set_state(session, "offset", update["update_id"] + 1)
+                session.commit()
+                return False
+            member.handle(session, update)
+            if user_id != controller.owner_id:
+                controller.set_state(session, "offset", update["update_id"] + 1)
+                session.commit()
+            return True
 
     async def deliver(self) -> None:
         while True:
-            await deliver_one(self.client, SessionLocal, self.controller)
+            with SessionLocal() as session:
+                recipients = self.controllers(session)
+            for member in recipients:
+                await deliver_one(self.client, SessionLocal, member)
             await asyncio.sleep(1.1)
 
     async def schedule(self) -> None:
@@ -247,7 +309,8 @@ class BotRuntime:
 
     async def run(self) -> None:
         with SessionLocal() as session:
-            recover_delivery(session, self.controller)
+            for member in self.controllers(session):
+                recover_delivery(session, member)
             self.controller.set_state(session, "last_poll", None)
             self.controller.set_state(session, "build_ref", settings.build_ref)
             if self.controller.state(session, "search_running"):
@@ -327,7 +390,15 @@ async def run_bot(config: dict) -> None:
         if os.name != "nt":
             task = asyncio.current_task()
             asyncio.get_running_loop().add_signal_handler(signal.SIGTERM, task.cancel)
-        await BotRuntime(client, BotController(owner, config, bot_id=identity["id"])).run()
+        await BotRuntime(
+            client,
+            BotController(
+                owner,
+                config,
+                bot_id=identity["id"],
+                bot_username=identity["username"],
+            ),
+        ).run()
     finally:
         await client.close()
 

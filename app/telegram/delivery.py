@@ -68,6 +68,8 @@ def recover_delivery(session: Session, controller: BotController) -> None:
 
 
 def prepare_message(session: Session, controller: BotController) -> BotMessage | None:
+    if controller.owner_id not in controller.allowed_user_ids(session):
+        return None
     now = utcnow()
     rate_limit = controller.state(session, "delivery_after")
     if rate_limit and datetime.fromisoformat(rate_limit) > now:
