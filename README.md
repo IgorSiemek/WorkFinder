@@ -126,6 +126,10 @@ alembic/               wersjonowane migracje
 | BBH, Aptiv, State Street, Motorola Solutions and Rolls-Royce | Enabled | Their official public Workday search endpoints, queried for Kraków and restricted to internship/training roles. Rolls-Royce uses its Intern_Graduate site. |
 | Huntsman, Ecolab and Electrolux | Enabled | Official public Workday feeds. Electrolux uses the employer's city spelling Cracow. Only internship/training roles in Kraków are imported. |
 | HAVI | Enabled | Official SAP careers table with pagination, per-offer city, full descriptions and publication dates. |
+| Lundbeck | Enabled | Complete JSON vacancy model from the official GBS website, with per-offer city and SAP job descriptions. |
+| TE Connectivity | Enabled | Public SAP search API with pagination and full descriptions. Duplicate or incomplete result pages prevent confirming absence. |
+| StoneX | Enabled | Official international iCIMS portal, all result pages and per-offer city checks. |
+| IG Group | Enabled | Official public Workday feed, restricted to internship/training roles in Kraków. |
 | PepsiCo | Enabled | Official public careers API with pagination and per-offer location checks. |
 | Euroclear | Partial when city is missing | Official public Oracle feed and job details. Country-only Poland listings remain excluded from the Kraków job list and are recorded in search observations. Missing city metadata prevents confirming absence. |
 | Shell, ABB and Aon | Manual watchlist | Official careers links are available on Companies; no automatic provider is claimed. |

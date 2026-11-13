@@ -127,6 +127,10 @@ def test_all_requested_krakow_companies_have_enabled_sources() -> None:
         "Ecolab",
         "PepsiCo",
         "Electrolux",
+        "Lundbeck",
+        "TE Connectivity",
+        "StoneX",
+        "IG Group",
     }
     companies = {
         source.config.company

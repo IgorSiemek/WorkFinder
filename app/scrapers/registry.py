@@ -6,6 +6,7 @@ from app.scrapers.arbeitnow import ArbeitnowSource
 from app.scrapers.base import JobSource
 from app.scrapers.business_centres import EuroclearSource, HaviSource, PepsiCoSource
 from app.scrapers.career_pages import CareerPageConfig, CareerPageSource
+from app.scrapers.early_careers import LundbeckSource, StoneXSource, TEConnectivitySource
 from app.scrapers.employer_feeds import AliorSource, HitachiSource, PhenomSource
 from app.scrapers.workday import WorkdayConfig, WorkdaySource
 
@@ -92,6 +93,15 @@ def _company_sources() -> list[JobSource]:
                 site="Ecolab_External",
             )
         ),
+        WorkdaySource(
+            WorkdayConfig(
+                name="IG Group Careers",
+                company="IG Group",
+                host="ig.wd103.myworkdayjobs.com",
+                tenant="ig",
+                site="EXT_IG",
+            )
+        ),
     ]
     pages = [
         CareerPageConfig(
@@ -156,6 +166,17 @@ def _company_sources() -> list[JobSource]:
             "Euroclear",
             "https://don.fa.em2.oraclecloud.com/hcmUI/CandidateExperience/en/sites/CX_1003/jobs",
         ),
+        CareerPageConfig(
+            "Lundbeck Careers",
+            "Lundbeck",
+            "https://www.lundbeck.com/gbs/careers/your-job/vacancies",
+        ),
+        CareerPageConfig(
+            "TE Connectivity Careers", "TE Connectivity", "https://careers.te.com/search/"
+        ),
+        CareerPageConfig(
+            "StoneX Careers", "StoneX", "https://english-stonex.icims.com/jobs/search"
+        ),
     ]
     adapters = {
         "Hitachi": HitachiSource,
@@ -165,6 +186,9 @@ def _company_sources() -> list[JobSource]:
         "HAVI": HaviSource,
         "PepsiCo": PepsiCoSource,
         "Euroclear": EuroclearSource,
+        "Lundbeck": LundbeckSource,
+        "TE Connectivity": TEConnectivitySource,
+        "StoneX": StoneXSource,
     }
     return workday_sources + [
         adapters.get(config.company, CareerPageSource)(config) for config in pages
