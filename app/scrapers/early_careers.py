@@ -118,48 +118,75 @@ def posting(source, client, identifier, title, city, url, *, date_label="") -> J
 
 
 class LundbeckSource(CareerPageSource):
-    """Read the full JSON model used by the official Lundbeck vacancy list."""
+    """Read the official SAP careers table, including all Krakow result pages."""
+
+    max_pages = 40
 
     def search_jobs(self, criteria: SearchCriteria) -> list[JobPosting]:
         self.scan_complete = self.can_confirm_absence = False
         results = []
+        seen = set()
         missing_city = False
+        offset = 0
         with public_client() as client:
-            response = client.get(self.config.url)
-            response.raise_for_status()
-            model = re.search(r'class="js-filterable-list"[^>]*data-url="([^"]+)"', response.text)
-            if not model:
-                raise ValueError("Lundbeck vacancy model URL is unavailable")
-            url = urljoin(self.config.url, model[1])
-            if urlsplit(url).netloc != urlsplit(self.config.url).netloc:
-                raise ValueError("Unexpected Lundbeck model host")
-            response = client.get(url)
-            response.raise_for_status()
-            data = response.json()
-            if not isinstance(data.get("items"), list) or not isinstance(data.get("filters"), list):
-                raise ValueError("Lundbeck vacancy model has no valid result set")
-            seen = set()
-            for item in data["items"]:
-                title = plain_text(item.get("title"))
-                if not is_internship_role(title):
-                    continue
-                city = plain_text(item.get("location"))
-                missing_city = missing_city or not city or city.casefold() == "poland"
-                if not relevant_to_krakow(city, "", remote=False):
-                    continue
-                url = item["link"]
-                if urlsplit(url).hostname != "jobs.lundbeck" or urlsplit(url).scheme != "https":
-                    raise ValueError("Unexpected Lundbeck job host")
-                identifier = str(item["id"])
-                if identifier in seen:
-                    continue
-                seen.add(identifier)
-                job = posting(self, client, identifier, title, city, url)
-                if matches(job, criteria):
-                    results.append(job)
-        self.scan_complete = self.can_confirm_absence = not missing_city
+            for _ in range(self.max_pages):
+                response = client.get(
+                    self.config.url,
+                    params={
+                        "q": "",
+                        "locationsearch": "Krakow",
+                        "locale": "en_GB",
+                        "startrow": offset,
+                    },
+                )
+                response.raise_for_status()
+                html = response.text
+                summary = plain_text(html)
+                count = re.search(r"Results\s+[\d,]+\s*[\u2013-]\s*[\d,]+\s+of\s+([\d,]+)", summary)
+                if count:
+                    total = int(count[1].replace(",", ""))
+                elif "there are currently no open positions matching" in summary.casefold():
+                    total = 0
+                else:
+                    raise ValueError("Lundbeck careers table has no verifiable result count")
+                page_urls = set()
+                for row in re.findall(r"<tr\b[^>]*>(.*?)</tr>", html, re.I | re.S):
+                    link = next((m for m in ANCHOR_PATTERN.finditer(row) if "/job/" in m[1]), None)
+                    if not link:
+                        continue
+                    url = urljoin(self.config.url, link[1])
+                    if urlsplit(url).hostname != urlsplit(self.config.url).hostname:
+                        raise ValueError("Unexpected Lundbeck job host")
+                    page_urls.add(url)
+                    title = plain_text(link[2])
+                    if url in seen or not is_internship_role(title):
+                        continue
+                    location = re.search(
+                        r'<td\b[^>]*class="[^"\n]*colLocation[^"\n]*"[^>]*>(.*?)</td>',
+                        row,
+                        re.I | re.S,
+                    )
+                    city = plain_text(location[1]) if location else ""
+                    missing_city = missing_city or not city or city.casefold() == "poland"
+                    if not relevant_to_krakow(city, "", remote=False):
+                        continue
+                    identifier = url.rstrip("/").rsplit("/", 1)[-1]
+                    job = posting(self, client, identifier, title, city, url)
+                    if matches(job, criteria):
+                        results.append(job)
+                new_urls = page_urls - seen
+                seen.update(page_urls)
+                if len(seen) >= total:
+                    self.scan_complete = True
+                    break
+                if not new_urls:
+                    break
+                offset += len(page_urls)
+        self.scan_complete = self.can_confirm_absence = self.scan_complete and not missing_city
         self.last_search_note = (
-            "Lundbeck internship city metadata unavailable" if missing_city else ""
+            ""
+            if self.scan_complete
+            else "Lundbeck pagination incomplete or internship city unavailable"
         )
         return results
 

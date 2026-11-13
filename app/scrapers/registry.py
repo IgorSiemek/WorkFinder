@@ -169,7 +169,7 @@ def _company_sources() -> list[JobSource]:
         CareerPageConfig(
             "Lundbeck Careers",
             "Lundbeck",
-            "https://www.lundbeck.com/gbs/careers/your-job/vacancies",
+            "https://jobs.lundbeck/search/",
         ),
         CareerPageConfig(
             "TE Connectivity Careers", "TE Connectivity", "https://careers.te.com/search/"

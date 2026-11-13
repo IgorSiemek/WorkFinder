@@ -24,70 +24,50 @@ def sap_description():
     <footer>Cookie consent</footer>"""
 
 
-def lundbeck_item(identifier, city="Krakow", title="Finance Intern"):
-    return {
-        "id": identifier,
-        "title": title,
-        "location": city,
-        "link": f"https://jobs.lundbeck/job/Finance-Intern/{identifier}/",
-    }
+def lundbeck_row(identifier, city="Krakow", title="Finance Intern"):
+    return f"""<tr><td><a href="/job/Finance-Intern/{identifier}/">{title}</a></td>
+    <td class="colLocation hidden-phone">{city}</td></tr>"""
 
 
-def test_lundbeck_reads_entire_model_and_full_description_without_cookie_text(monkeypatch):
+def test_lundbeck_reads_later_pages_and_full_description_without_cookie_text(monkeypatch):
     calls = []
 
     def handler(request):
-        calls.append(str(request.url))
-        if request.url.path == "/vacancies":
-            return httpx.Response(
-                200, text='<div class="js-filterable-list" data-url="/model.json">'
+        calls.append(request)
+        if request.url.path == "/search/":
+            rows = (
+                lundbeck_row("1", "Warsaw") + lundbeck_row("3", title="Senior Analyst")
+                if request.url.params["startrow"] == "0"
+                else lundbeck_row("2")
             )
-        if request.url.path == "/model.json":
-            return httpx.Response(
-                200,
-                json={
-                    "filters": [],
-                    "items": [
-                        lundbeck_item("1", "Warsaw"),
-                        lundbeck_item("2"),
-                        lundbeck_item("2"),
-                        lundbeck_item("3", title="Senior Analyst"),
-                    ],
-                },
-            )
+            return httpx.Response(200, text="Results 1 - 2 of 3<table>" + rows + "</table>")
         return httpx.Response(200, text=sap_description())
 
     mock_client(monkeypatch, handler)
     source = LundbeckSource(
-        CareerPageConfig("Lundbeck", "Lundbeck", "https://example.com/vacancies")
+        CareerPageConfig("Lundbeck", "Lundbeck", "https://jobs.lundbeck/search/")
     )
     jobs = source.search_jobs(SearchCriteria(keywords=["SAP"]))
     assert [job.source_job_id for job in jobs] == ["2"]
     assert jobs[0].description == "Introduction to finance Excel, SAP and reporting. Hybrid."
     assert jobs[0].date_posted == date(2026, 11, 5)
     assert jobs[0].remote_type == "Hybrid"
-    assert len(calls) == 3
+    assert [r.url.params["startrow"] for r in calls if r.url.path == "/search/"] == ["0", "2"]
     assert source.scan_complete and source.can_confirm_absence
 
 
-@pytest.mark.parametrize("model", [{"filters": [], "items": []}, {"filters": []}])
-def test_lundbeck_requires_explicit_empty_result_set(monkeypatch, model):
-    def handler(request):
-        if request.url.path == "/vacancies":
-            return httpx.Response(
-                200, text='<div class="js-filterable-list" data-url="/model.json">'
-            )
-        return httpx.Response(200, json=model)
-
-    mock_client(monkeypatch, handler)
+@pytest.mark.parametrize("valid_empty", [True, False])
+def test_lundbeck_requires_verifiable_empty_result_set(monkeypatch, valid_empty):
+    body = "There are currently no open positions matching" if valid_empty else "Careers homepage"
+    mock_client(monkeypatch, lambda request: httpx.Response(200, text=body))
     source = LundbeckSource(
-        CareerPageConfig("Lundbeck", "Lundbeck", "https://example.com/vacancies")
+        CareerPageConfig("Lundbeck", "Lundbeck", "https://jobs.lundbeck/search/")
     )
-    if "items" in model:
+    if valid_empty:
         assert source.search_jobs(SearchCriteria()) == []
         assert source.scan_complete
     else:
-        with pytest.raises(ValueError, match="valid result set"):
+        with pytest.raises(ValueError, match="verifiable result count"):
             source.search_jobs(SearchCriteria())
         assert not source.can_confirm_absence
 
@@ -185,7 +165,7 @@ def test_stonex_scans_later_pages_and_uses_offer_location_not_search_page(
         return httpx.Response(
             200,
             text='<div class="iCIMS_InfoMsg iCIMS_InfoMsg_Job">'
-            'Excel and financial reporting.</div>',
+            "Excel and financial reporting.</div>",
         )
 
     mock_client(monkeypatch, handler)
@@ -212,16 +192,28 @@ def test_stonex_repeated_page_is_partial(monkeypatch):
 
 
 def test_lundbeck_missing_city_cannot_confirm_absence(monkeypatch):
-    def handler(request):
-        if request.url.path == "/vacancies":
-            return httpx.Response(
-                200, text='<div class="js-filterable-list" data-url="/model.json">'
-            )
-        return httpx.Response(200, json={"filters": [], "items": [lundbeck_item("1", "Poland")]})
-
-    mock_client(monkeypatch, handler)
+    mock_client(
+        monkeypatch,
+        lambda request: httpx.Response(
+            200, text="Results 1 - 1 of 1" + lundbeck_row("1", "Poland")
+        ),
+    )
     source = LundbeckSource(
-        CareerPageConfig("Lundbeck", "Lundbeck", "https://example.com/vacancies")
+        CareerPageConfig("Lundbeck", "Lundbeck", "https://jobs.lundbeck/search/")
+    )
+    assert source.search_jobs(SearchCriteria()) == []
+    assert not source.scan_complete and not source.can_confirm_absence
+
+
+def test_lundbeck_repeated_page_is_partial(monkeypatch):
+    mock_client(
+        monkeypatch,
+        lambda request: httpx.Response(
+            200, text="Results 1 - 1 of 2" + lundbeck_row("1", title="Accountant")
+        ),
+    )
+    source = LundbeckSource(
+        CareerPageConfig("Lundbeck", "Lundbeck", "https://jobs.lundbeck/search/")
     )
     assert source.search_jobs(SearchCriteria()) == []
     assert not source.scan_complete and not source.can_confirm_absence
