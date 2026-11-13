@@ -22,6 +22,7 @@ from app.services.search import import_posting
 WATCHLIST = [
     "State Street",
     "Motorola Solutions",
+    "Rolls-Royce",
     "Shell",
     "ABB",
     "Aon",

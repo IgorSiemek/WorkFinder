@@ -36,7 +36,7 @@ Uruchomienie wymaga Pythona 3.12+, tokena bota utworzonego przez oficjalnego [Bo
 
    Wyślij `/start`, następnie wybierz „Szukaj teraz”. Domyślny harmonogram wyszukuje o 09:00 i 17:00 według `Europe/Warsaw`. Przypomnienia o zaległych działaniach pojawiają się raz dziennie po 10:00. Próg dopasowania wynosi 60/100. Te wartości można zmienić w konfiguracji.
 
-Karty ofert mają przyciski otwarcia oferty, zapisania, pominięcia i oznaczenia wysłanej aplikacji. Przycisk „Status” pozwala wybrać etap rekrutacji. Dla Motorola Solutions, BBH, Aptiv i State Street dostępne jest przygotowanie formularza Workday z przeglądem przed wysłaniem.
+Karty ofert mają przyciski otwarcia oferty, zapisania, pominięcia i oznaczenia wysłanej aplikacji. Przycisk „Status” pozwala wybrać etap rekrutacji. Dla zarejestrowanych stron Workday dostępne jest przygotowanie formularza z przeglądem przed wysłaniem.
 
 ### Formularze aplikacyjne
 
@@ -123,7 +123,7 @@ alembic/               wersjonowane migracje
 | Provider | State | Method and limitation |
 |---|---|---|
 | Arbeitnow | Enabled | Public job-board API, filtered locally for job relevance and Kraków. Coverage depends on its feed. |
-| BBH, Aptiv, State Street and Motorola Solutions | Enabled | Their official public Workday search endpoints, queried for Kraków and restricted to internship/training roles. |
+| BBH, Aptiv, State Street, Motorola Solutions and Rolls-Royce | Enabled | Their official public Workday search endpoints, queried for Kraków and restricted to internship/training roles. Rolls-Royce uses its Intern_Graduate site. |
 | Shell, ABB and Aon | Manual watchlist | Official careers links are available on Companies; no automatic provider is claimed. |
 | Hitachi | Enabled | Structured public Kraków results, including later pages and roles whose experience category is Entry Level. |
 | PMI and Cisco | Enabled | Structured public Phenom search with pagination and Polish/English internship queries. City is checked on each offer; future talent pools are excluded. |

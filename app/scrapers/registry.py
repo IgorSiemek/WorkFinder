@@ -54,6 +54,15 @@ def _company_sources() -> list[JobSource]:
                 site="Careers",
             )
         ),
+        WorkdaySource(
+            WorkdayConfig(
+                name="Rolls-Royce Careers",
+                company="Rolls-Royce",
+                host="rollsroyce.wd3.myworkdayjobs.com",
+                tenant="rollsroyce",
+                site="Intern_Graduate",
+            )
+        ),
     ]
     pages = [
         CareerPageConfig(

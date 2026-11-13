@@ -104,7 +104,7 @@ def prepare(controller, session: Session, job_id: int) -> ApplicationDraft:  # n
     job = get_job(session, job_id)
     if not workday_host(job):
         raise ValueError(
-            "Automatyczny formularz obsługuje teraz Motorola, BBH, Aptiv i State Street."
+            "Automatyczny formularz obsługuje oferty z zarejestrowanych stron Workday."
         )
     if not job.is_active or job.ignored:
         raise ValueError("Wybierz aktywną, widoczną ofertę.")
