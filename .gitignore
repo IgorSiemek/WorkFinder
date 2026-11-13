@@ -14,3 +14,5 @@ logs/
 data/config*.json
 data/workfinder.lock
 data/applications/
+data/profiles/
+data/profile*.json

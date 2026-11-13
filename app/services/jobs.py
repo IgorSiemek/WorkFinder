@@ -6,8 +6,8 @@ from sqlalchemy import func, or_, select
 from sqlalchemy.orm import Session, selectinload
 
 from app.models import Application, CandidateProfile, Job, utcnow
+from app.profiles.scope import active_scope, job_filter, role_matches
 from app.scrapers.base import JobPosting
-from app.scrapers.common import is_internship_role
 from app.services.normalization import canonicalize_url
 from app.services.progress import (
     APPLICATION_STATUSES,
@@ -43,7 +43,7 @@ def list_jobs(
         if view == "saved":
             filters.append(Job.application.has(Application.status.in_(["Saved", "Preparing"])))
         else:
-            filters.extend([Job.is_internship, Job.is_active.is_(True)])
+            filters.extend([job_filter(), Job.is_active.is_(True)])
             if hide_applied:
                 filters.append(~Job.application.has(Application.status.in_(APPLIED_STATUSES)))
             filters.append(Job.match_score >= minimum_score)
@@ -150,12 +150,23 @@ def add_manual_job(session: Session, text: str) -> Job:
     if len(parts) < 3:
         raise ValueError("Użyj /add Tytuł stażu | Firma | https://link | Hybrid | Opis")
     title, company, url = parts[:3]
-    if not title or not company or not is_internship_role(title):
+    if not title or not company or not role_matches(title):
+        if active_scope() is not None:
+            raise ValueError("Podaj firmę i tytuł zgodny z wymaganiami tego profilu")
         raise ValueError("Podaj nazwę firmy i tytuł wskazujący staż lub praktyki")
     canonicalize_url(url)
     remote = parts[3] if len(parts) > 3 else "On-site"
-    if remote not in {"Hybrid", "On-site"}:
+    scope = active_scope()
+    modes = (
+        {"Hybrid", "On-site", "Remote"}
+        if scope and scope["remote_allowed"]
+        else {"Hybrid", "On-site"}
+    )
+    if remote not in modes:
         raise ValueError("Tryb pracy: Hybrid lub On-site")
+    city = scope["locations"][0] if scope and scope["locations"] else "Kraków"
+    if scope and remote == "Remote":
+        city = "Remote"
     job, _ = import_posting(
         session,
         JobPosting(
@@ -164,7 +175,7 @@ def add_manual_job(session: Session, text: str) -> Job:
             title=title,
             company=company,
             url=url,
-            location=f"Kraków · {remote}",
+            location=f"{city} · {remote}",
             remote_type=remote,
             description=parts[4] if len(parts) > 4 else "",
             raw_payload={"manual": True},

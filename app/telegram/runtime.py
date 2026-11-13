@@ -87,6 +87,7 @@ class BotRuntime:
         self.client = client
         self.controller = controller
         self.search_task: asyncio.Task | None = None
+        self.profile_router = None
 
     def controllers(self, session) -> list[BotController]:  # noqa: ANN001
         return [
@@ -254,7 +255,11 @@ class BotRuntime:
                 self.controller.set_state(session, "last_poll", utcnow().isoformat())
                 session.commit()
             for update in updates:
-                authorized = await asyncio.to_thread(self.handle_update, update)
+                authorized = (
+                    await self.profile_router.dispatch(update)
+                    if self.profile_router is not None
+                    else await asyncio.to_thread(self.handle_update, update)
+                )
                 callback = update.get("callback_query")
                 if callback and authorized:
                     with suppress(TelegramError, httpx.HTTPError):
@@ -308,7 +313,7 @@ class BotRuntime:
                 maintenance_at = utcnow() + timedelta(seconds=30)
             await asyncio.sleep(2)
 
-    async def run(self) -> None:
+    async def run(self, *, poll: bool = True) -> None:
         with SessionLocal() as session:
             for member in self.controllers(session):
                 recover_delivery(session, member)
@@ -348,7 +353,10 @@ class BotRuntime:
                 delay = min(60, delay * 2)
 
         async with asyncio.TaskGroup() as group:
-            group.create_task(resilient(self.poll))
+            if poll:
+                group.create_task(resilient(self.poll))
+            if self.profile_router is not None:
+                group.create_task(self.profile_router.run())
             group.create_task(resilient(self.deliver))
             group.create_task(self.schedule())
             group.create_task(ApplicationWorker(self.client, self.controller, SessionLocal).run())
@@ -395,7 +403,7 @@ async def run_bot(config: dict) -> None:
         if os.name != "nt":
             task = asyncio.current_task()
             asyncio.get_running_loop().add_signal_handler(signal.SIGTERM, task.cancel)
-        await BotRuntime(
+        runtime = BotRuntime(
             client,
             BotController(
                 owner,
@@ -403,7 +411,14 @@ async def run_bot(config: dict) -> None:
                 bot_id=identity["id"],
                 bot_username=identity["username"],
             ),
-        ).run()
+        )
+        from app.profiles.router import ProfileRouter
+        from app.profiles.store import ProfileStore
+
+        store = ProfileStore(config_path().parent / "profiles")
+        if store.exists():
+            runtime.profile_router = ProfileRouter(runtime, store)
+        await runtime.run()
     finally:
         await client.close()
 

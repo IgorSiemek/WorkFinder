@@ -1,0 +1,29 @@
+{
+  "version": 1,
+  "timezone": "Europe/Warsaw",
+  "search_times": ["09:00", "17:00"],
+  "reminder_time": "10:00",
+  "minimum_score": 60,
+  "page_size": 5,
+  "sources": ["Motorola Solutions Careers", "IG Group Careers", "Aptiv Careers"],
+  "job_scope": {
+    "role_type": "regular",
+    "locations": ["Kraków"],
+    "remote_allowed": false,
+    "titles": ["Python", "Backend", "Software Engineer"],
+    "excluded_titles": ["Senior", "Lead", "Manager"]
+  },
+  "profile": {
+    "name": "Przykładowy profil programisty — zmień wymagania przed importem",
+    "skills": ["Python", "SQL"],
+    "technologies": ["Git", "Docker"],
+    "languages": ["Polish", "English"],
+    "preferred_jobs": ["Backend Developer", "Software Engineer"],
+    "preferred_locations": ["Kraków"],
+    "remote_preference": "Hybrid"
+  },
+  "searches": [],
+  "companies": [],
+  "ignore_rules": [],
+  "cv_versions": []
+}

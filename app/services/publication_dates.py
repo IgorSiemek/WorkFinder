@@ -7,6 +7,7 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session, selectinload
 
 from app.models import Job
+from app.profiles.scope import job_filter
 from app.scrapers.publication_dates import lookup_publication_date, source_date
 from app.services.backups import automatic_backup
 
@@ -48,7 +49,7 @@ def refresh_posting_dates(
     if job_id is not None:
         query = query.where(Job.id == job_id)
     else:
-        query = query.where(Job.date_posted.is_(None), Job.is_internship)
+        query = query.where(Job.date_posted.is_(None), job_filter())
     if not force:
         query = query.where(
             func.coalesce(Job.raw_payload["_publication_check"]["checked_on"].as_string(), "")

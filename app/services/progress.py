@@ -79,7 +79,9 @@ def change_status(
                 "follow_up",
                 f"Follow-up set to {application.next_action_date}",
             )
-        if settings.excel_jobs_path and not job.is_demo:
+        from app.profiles.context import current_profile
+
+        if settings.excel_jobs_path and not job.is_demo and current_profile() is None:
             task = session.scalar(
                 select(ExcelSyncTask).where(
                     ExcelSyncTask.application_id == application.id,

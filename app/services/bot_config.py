@@ -11,6 +11,8 @@ from sqlalchemy.orm import Session
 
 from app.config import PROJECT_ROOT, settings
 from app.models import CandidateProfile, CompanyPreference, CvVersion, IgnoreRule, Job, SavedSearch
+from app.profiles.context import current_profile
+from app.profiles.scope import validate_scope
 from app.services.ignoring import recalculate_rule_ignores
 from app.services.matching import score_job
 
@@ -54,6 +56,8 @@ DEFAULTS = {
 
 
 def config_path() -> Path:
+    if profile := current_profile():
+        return profile.directory / "config.json"
     return PROJECT_ROOT / settings.config_path
 
 
@@ -85,10 +89,19 @@ def _clock(value: object) -> time:
 def validate_config(raw: object) -> dict:
     if not isinstance(raw, dict):
         raise ValueError("Konfiguracja musi być obiektem JSON")
-    allowed = set(DEFAULTS) | {"profile", "searches", "companies", "ignore_rules", "cv_versions"}
+    allowed = set(DEFAULTS) | {
+        "profile",
+        "searches",
+        "companies",
+        "ignore_rules",
+        "cv_versions",
+        "job_scope",
+    }
     if raw.keys() - allowed:
         raise ValueError(f"Nieznane pola konfiguracji: {', '.join(sorted(raw.keys() - allowed))}")
     config = deepcopy(DEFAULTS | raw)
+    if "job_scope" in config:
+        config["job_scope"] = validate_scope(config["job_scope"])
     if type(config["version"]) is not int or config["version"] != 1:
         raise ValueError("Obsługiwana wersja konfiguracji: 1")
     try:
@@ -114,7 +127,9 @@ def validate_config(raw: object) -> dict:
             raise ValueError(f"Nieznane źródła: {', '.join(sorted(unknown))}")
     if "profile" in config:
         _validate_fields(config["profile"], PROFILE_FIELDS, "profile")
-        if config["profile"].get("preferred_locations", ["Kraków"]) != ["Kraków"]:
+        if "job_scope" not in config and config["profile"].get(
+            "preferred_locations", ["Kraków"]
+        ) != ["Kraków"]:
             raise ValueError("Obsługiwana lokalizacja profilu: Kraków")
     for section, fields, identity in (
         ("searches", SEARCH_FIELDS, "name"),
@@ -139,7 +154,7 @@ def validate_config(raw: object) -> dict:
             if section == "searches":
                 if not 0 <= row.get("minimum_score", 50) <= 100:
                     raise ValueError("searches.minimum_score: wymagana liczba od 0 do 100")
-                if row.get("locations", ["Kraków"]) != ["Kraków"]:
+                if "job_scope" not in config and row.get("locations", ["Kraków"]) != ["Kraków"]:
                     raise ValueError("Obsługiwana lokalizacja wyszukiwania: Kraków")
             if section == "ignore_rules" and row.get("rule_type") not in {"keyword", "company"}:
                 raise ValueError("ignore_rules.rule_type: keyword lub company")
@@ -149,6 +164,8 @@ def validate_config(raw: object) -> dict:
 def export_config(session: Session, path: Path | None = None) -> Path:
     path = path or config_path()
     raw = deepcopy(DEFAULTS)
+    if profile_context := current_profile():
+        raw["job_scope"] = deepcopy(profile_context.scope)
     profile = session.scalar(select(CandidateProfile).limit(1))
     if profile:
         raw["profile"] = {key: getattr(profile, key) for key in PROFILE_FIELDS}
@@ -180,6 +197,8 @@ def load_config(path: Path | None = None) -> dict:
 
 def apply_config(session: Session, config: dict) -> None:
     config = validate_config(config)
+    if "job_scope" in config and current_profile() is None:
+        raise ValueError("JSON z job_scope wymaga osobnego profilu; użyj profile-create")
     if "profile" in config:
         profile = session.scalar(select(CandidateProfile).limit(1)) or CandidateProfile()
         session.add(profile)

@@ -6,6 +6,7 @@ from sqlalchemy import create_engine, event
 from sqlalchemy.orm import DeclarativeBase, sessionmaker
 
 from app.config import PROJECT_ROOT, settings
+from app.profiles.context import current_profile
 
 
 class Base(DeclarativeBase):
@@ -32,7 +33,13 @@ engine = create_engine(
     if database_url.startswith("sqlite")
     else {},
 )
-SessionLocal = sessionmaker(bind=engine, autoflush=False, expire_on_commit=False)
+_default_sessions = sessionmaker(bind=engine, autoflush=False, expire_on_commit=False)
+
+
+def SessionLocal(*args, **kwargs):
+    profile = current_profile()
+    factory = profile.sessions if profile else _default_sessions
+    return factory(*args, **kwargs)
 
 
 @event.listens_for(engine, "connect")
@@ -52,7 +59,9 @@ def init_database() -> None:
 
     config = Config(str(PROJECT_ROOT / "alembic.ini"))
     config.set_main_option("script_location", str(PROJECT_ROOT / "alembic"))
-    config.set_main_option("sqlalchemy.url", database_url.replace("%", "%%"))
-    with engine.begin() as connection:
+    profile = current_profile()
+    bind = profile.engine if profile else engine
+    config.set_main_option("sqlalchemy.url", str(bind.url).replace("%", "%%"))
+    with bind.begin() as connection:
         config.attributes["connection"] = connection
         command.upgrade(config, "head")

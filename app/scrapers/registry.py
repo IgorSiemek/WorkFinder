@@ -196,6 +196,19 @@ def _company_sources() -> list[JobSource]:
 
 
 def enabled_sources() -> list[JobSource]:
+    from app.profiles.context import current_profile
+
+    if current_profile() is not None:
+        from app.profiles.sources import PersonalArbeitnowSource, PersonalWorkdaySource
+
+        return [
+            PersonalArbeitnowSource(),
+            *[
+                PersonalWorkdaySource(source.config)
+                for source in _company_sources()
+                if isinstance(source, WorkdaySource)
+            ],
+        ]
     return [ArbeitnowSource(), *_company_sources()]
 
 

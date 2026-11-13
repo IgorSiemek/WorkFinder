@@ -8,6 +8,7 @@ from sqlalchemy import String, case, select, update
 from sqlalchemy.orm import Session
 
 from app.models import BotMessage, Job, utcnow
+from app.profiles.scope import active_scope, job_filter
 from app.services.jobs import follow_ups, get_job
 from app.services.progress import CLOSED_STATUSES
 from app.telegram.client import TelegramError
@@ -28,7 +29,7 @@ def queue_notifications(session: Session, controller: BotController, now: dateti
         select(Job)
         .where(
             Job.is_demo.is_(False),
-            Job.is_internship,
+            job_filter(),
             Job.is_active.is_(True),
             Job.ignored.is_(False),
             ~Job.application.has(),
@@ -107,6 +108,12 @@ def prepare_message(session: Session, controller: BotController) -> BotMessage |
                 and not job.application
                 and (job.match_score >= controller.config["minimum_score"])
             )
+            if active_scope() is not None:
+                eligible = (
+                    eligible
+                    and session.scalar(select(Job.id).where(Job.id == job.id, job_filter()))
+                    is not None
+                )
         else:
             app = job.application
             today = (

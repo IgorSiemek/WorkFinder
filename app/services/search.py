@@ -3,6 +3,7 @@ from __future__ import annotations
 import logging
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from contextvars import copy_context
 from datetime import timedelta
 
 from sqlalchemy import select
@@ -18,8 +19,9 @@ from app.models import (
     SearchRun,
     utcnow,
 )
+from app.profiles.scope import active_scope, job_filter, location_matches, role_matches
 from app.scrapers.base import JobPosting, SearchCriteria
-from app.scrapers.common import INTERNSHIP_KEYWORDS, is_internship_role, relevant_to_krakow
+from app.scrapers.common import INTERNSHIP_KEYWORDS
 from app.scrapers.registry import enabled_sources
 from app.services.backups import automatic_backup
 from app.services.deduplication import find_duplicate
@@ -159,13 +161,14 @@ def run_search(session: Session, *, source_names: list[str] | None = None) -> Se
     configured_searches = session.scalars(
         select(SavedSearch).where(SavedSearch.enabled.is_(True))
     ).all()
-    keywords = (
-        sorted({keyword for search in configured_searches for keyword in search.keywords})
-        or DEFAULT_KEYWORDS
-    )
+    scope = active_scope()
+    keywords = sorted(
+        {keyword for search in configured_searches for keyword in search.keywords}
+    ) or (scope["titles"] if scope else DEFAULT_KEYWORDS)
     criteria = SearchCriteria(
-        keywords=sorted(set(keywords) | set(INTERNSHIP_KEYWORDS)),
-        locations=["Kraków", "Cracow"],
+        keywords=sorted(set(keywords) | (set() if scope else set(INTERNSHIP_KEYWORDS))),
+        locations=scope["locations"] if scope else ["Kraków", "Cracow"],
+        remote_allowed=scope["remote_allowed"] if scope else False,
     )
     negative_terms = {
         term.casefold() for search in configured_searches for term in search.negative_keywords
@@ -187,7 +190,7 @@ def run_search(session: Session, *, source_names: list[str] | None = None) -> Se
                 return source, [], exc, time.monotonic() - provider_started
 
         with ThreadPoolExecutor(max_workers=max(1, min(6, len(sources)))) as executor:
-            futures = [executor.submit(fetch, source) for source in sources]
+            futures = [executor.submit(copy_context().run, fetch, source) for source in sources]
             for future in as_completed(futures):
                 source, postings, error, duration = future.result()
                 provider_run = ProviderRun(
@@ -231,11 +234,9 @@ def run_search(session: Session, *, source_names: list[str] | None = None) -> Se
                             "Employer advertises future opportunities, not a confirmed vacancy"
                         )
                         continue
-                    if not is_internship_role(
-                        posting.title, posting.employment_type, posting.seniority
-                    ):
+                    if not role_matches(posting.title, posting.employment_type, posting.seniority):
                         continue
-                    if not relevant_to_krakow(
+                    if not location_matches(
                         posting.location,
                         posting.description,
                         posting.remote_type == "Remote",
@@ -275,7 +276,7 @@ def run_search(session: Session, *, source_names: list[str] | None = None) -> Se
             session.execute(
                 Job.__table__.update()
                 .where(
-                    Job.is_internship,
+                    job_filter(),
                     Job.source.in_(successful),
                     Job.last_seen < cutoff,
                     Job.is_demo.is_(False),

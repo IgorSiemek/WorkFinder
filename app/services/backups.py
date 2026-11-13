@@ -13,11 +13,14 @@ from sqlalchemy.exc import SQLAlchemyError
 
 from app.config import PROJECT_ROOT, settings
 from app.database import engine
+from app.profiles.context import current_profile
 
 logger = logging.getLogger(__name__)
 
 
 def backup_directory() -> Path:
+    if profile := current_profile():
+        return profile.directory / "backups"
     path = Path(settings.backup_dir).expanduser()
     return path if path.is_absolute() else PROJECT_ROOT / path
 
@@ -26,8 +29,9 @@ def list_backups() -> list[Path]:
     return sorted(backup_directory().glob("workfinder-*.sqlite3"), reverse=True)
 
 
-def backup_database(bind: Engine = engine, *, force: bool = False) -> Path | None:
+def backup_database(bind: Engine | None = None, *, force: bool = False) -> Path | None:
     """Create a consistent online SQLite snapshot, once per UTC day by default."""
+    bind = bind or (current_profile().engine if current_profile() else engine)
     if bind.dialect.name != "sqlite" or not bind.url.database or bind.url.database == ":memory:":
         return None
     directory = backup_directory()
@@ -52,7 +56,7 @@ def backup_database(bind: Engine = engine, *, force: bool = False) -> Path | Non
         temporary.unlink(missing_ok=True)
 
 
-def automatic_backup(bind: Engine = engine) -> None:
+def automatic_backup(bind: Engine | None = None) -> None:
     try:
         backup_database(bind)
     except (OSError, sqlite3.Error, SQLAlchemyError):

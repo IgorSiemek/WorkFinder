@@ -1,5 +1,9 @@
 # WorkFinder
 
+Private Telegram workspaces can be provisioned from separate requirements JSON files without
+changing the existing shared profile. See [private profiles](docs/private-profiles.md) and
+[the example JSON](config.profile.example.json).
+
 WorkFinder wyszukuje staże, praktyki i programy studenckie w Krakowie. Prywatny bot Telegram pokazuje nowe oferty, ocenia dopasowanie i zapisuje historię rekrutacji w SQLite.
 
 Uruchomienie wymaga Pythona 3.12+, tokena bota utworzonego przez oficjalnego [BotFather](https://t.me/BotFather) oraz identyfikatora Twojego konta Telegram. Proces bota korzysta z long pollingu i obsługuje wiadomości oraz harmonogram podczas pracy komputera lub serwera.

@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from app.models import CandidateProfile, Job
+from app.profiles.scope import active_scope, location_matches
 from app.scrapers.common import is_internship_role
 
 SKILL_ALIASES: dict[str, tuple[str, ...]] = {
@@ -68,6 +69,8 @@ def classify_job(text: str) -> list[str]:
 
 
 def score_job(job: Job, profile: CandidateProfile | None = None) -> MatchResult:
+    if active_scope() is not None:
+        return score_personal_job(job, profile)
     text = " ".join(
         value or ""
         for value in [
@@ -119,3 +122,42 @@ def score_job(job: Job, profile: CandidateProfile | None = None) -> MatchResult:
     missing = [skill for skill in skills if skill.casefold() not in profile_skills]
     categories = classify_job(text)
     return MatchResult(min(100, max(0, score)), explanation, skills, missing, categories)
+
+
+def score_personal_job(job: Job, profile: CandidateProfile | None) -> MatchResult:
+    scope = active_scope()
+    text = " ".join(
+        value or ""
+        for value in (
+            job.title,
+            job.description,
+            job.requirements,
+            job.responsibilities,
+        )
+    ).casefold()
+    terms = list(dict.fromkeys((profile.skills + profile.technologies) if profile else []))
+    found = [term for term in terms if term.casefold() in text]
+    missing = [term for term in terms if term not in found]
+    titles = scope["titles"] or (profile.preferred_jobs if profile else [])
+    title_points = 35 if any(term.casefold() in job.title.casefold() for term in titles) else 0
+    skill_points = round(25 * len(found) / len(terms)) if terms else 0
+    location_points = (
+        10 if location_matches(job.location, remote=job.remote_type == "Remote") else 0
+    )
+    reasons = [
+        {"label": label, "points": points}
+        for label, points in (
+            ("Base match", 30),
+            ("Preferred role", title_points),
+            ("Profile skills", skill_points),
+            ("Preferred location", location_points),
+        )
+        if points
+    ]
+    return MatchResult(
+        30 + title_points + skill_points + location_points,
+        reasons,
+        found,
+        missing,
+        classify_job(text),
+    )

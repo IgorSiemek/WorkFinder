@@ -37,9 +37,50 @@ def main() -> None:
             "backup",
             "retry-excel",
             "refresh-dates",
+            "profile-create",
+            "profile-invite",
+            "profile-list",
         ],
     )
+    parser.add_argument("--profile", help="Private profile key, e.g. friend")
+    parser.add_argument("--json", dest="profile_json", help="New profile requirements JSON")
+    parser.add_argument(
+        "--bot-username", default="", help="Telegram bot username for invitation link"
+    )
     args = parser.parse_args()
+    if args.command.startswith("profile-"):
+        import json
+        from pathlib import Path
+
+        from app.profiles.store import ProfileStore
+
+        store = ProfileStore(config_path().parent / "profiles")
+        if args.command == "profile-list":
+            print(json.dumps(store.profiles(), ensure_ascii=True, indent=2))
+            return
+        if not args.profile:
+            parser.error("--profile is required")
+        try:
+            if args.command == "profile-create":
+                if not args.profile_json:
+                    parser.error("--json is required")
+                raw = json.loads(Path(args.profile_json).read_text(encoding="utf-8-sig"))
+                token = store.create(args.profile, raw)
+            else:
+                token = store.invite(args.profile)
+        except (ValueError, OSError) as exc:
+            parser.error(str(exc))
+        print("Private profile invitation, single-use, valid for 24 hours:")
+        print(f"/start profile_{token}")
+        if args.bot_username:
+            from urllib.parse import quote
+
+            print(
+                f"https://t.me/{quote(args.bot_username.lstrip('@'), safe='')}"
+                f"?start=profile_{token}"
+            )
+        print("Restart the bot after creating its first private profile to enable routing.")
+        return
     if args.command == "healthcheck":
         from datetime import datetime, timedelta
 
