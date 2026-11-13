@@ -121,6 +121,12 @@ def test_all_requested_krakow_companies_have_enabled_sources() -> None:
         "State Street",
         "Motorola Solutions",
         "Rolls-Royce",
+        "Huntsman",
+        "HAVI",
+        "Euroclear",
+        "Ecolab",
+        "PepsiCo",
+        "Electrolux",
     }
     companies = {
         source.config.company

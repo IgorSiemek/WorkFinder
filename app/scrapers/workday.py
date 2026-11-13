@@ -20,6 +20,7 @@ class WorkdayConfig:
     host: str
     tenant: str
     site: str
+    search_text: str = "Krakow"
 
 
 class WorkdaySource(JobSource):
@@ -66,7 +67,7 @@ class WorkdaySource(JobSource):
                     "appliedFacets": {},
                     "limit": 20,
                     "offset": offset,
-                    "searchText": "Krakow",
+                    "searchText": self.config.search_text,
                 },
                 timeout=settings.request_timeout_seconds,
                 headers={"User-Agent": settings.user_agent},

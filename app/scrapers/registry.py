@@ -4,6 +4,7 @@ from dataclasses import dataclass
 
 from app.scrapers.arbeitnow import ArbeitnowSource
 from app.scrapers.base import JobSource
+from app.scrapers.business_centres import EuroclearSource, HaviSource, PepsiCoSource
 from app.scrapers.career_pages import CareerPageConfig, CareerPageSource
 from app.scrapers.employer_feeds import AliorSource, HitachiSource, PhenomSource
 from app.scrapers.workday import WorkdayConfig, WorkdaySource
@@ -63,6 +64,34 @@ def _company_sources() -> list[JobSource]:
                 site="Intern_Graduate",
             )
         ),
+        WorkdaySource(
+            WorkdayConfig(
+                name="Huntsman Careers",
+                company="Huntsman",
+                host="huntsman.wd1.myworkdayjobs.com",
+                tenant="huntsman",
+                site="Huntsman",
+            )
+        ),
+        WorkdaySource(
+            WorkdayConfig(
+                name="Electrolux Careers",
+                company="Electrolux",
+                host="electrolux.wd3.myworkdayjobs.com",
+                tenant="electrolux",
+                site="ElectroluxCareerSite",
+                search_text="Cracow",
+            )
+        ),
+        WorkdaySource(
+            WorkdayConfig(
+                name="Ecolab Careers",
+                company="Ecolab",
+                host="ecolab.wd1.myworkdayjobs.com",
+                tenant="ecolab",
+                site="Ecolab_External",
+            )
+        ),
     ]
     pages = [
         CareerPageConfig(
@@ -120,12 +149,22 @@ def _company_sources() -> list[JobSource]:
             "https://careers.cisco.com/global/en/search-results",
             True,
         ),
+        CareerPageConfig("HAVI Careers", "HAVI", "https://jobs.havi.com/search/"),
+        CareerPageConfig("PepsiCo Careers", "PepsiCo", "https://www.pepsicojobs.com/main/jobs"),
+        CareerPageConfig(
+            "Euroclear Careers",
+            "Euroclear",
+            "https://don.fa.em2.oraclecloud.com/hcmUI/CandidateExperience/en/sites/CX_1003/jobs",
+        ),
     ]
     adapters = {
         "Hitachi": HitachiSource,
         "Alior": AliorSource,
         "Philip Morris International": PhenomSource,
         "Cisco": PhenomSource,
+        "HAVI": HaviSource,
+        "PepsiCo": PepsiCoSource,
+        "Euroclear": EuroclearSource,
     }
     return workday_sources + [
         adapters.get(config.company, CareerPageSource)(config) for config in pages
