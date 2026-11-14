@@ -17,6 +17,8 @@ from app.telegram.views import job_card
 
 
 def queue_notifications(session: Session, controller: BotController, now: datetime) -> None:
+    if controller.owner_id not in controller.allowed_user_ids(session):
+        return
     started = controller.state(session, "started_at")
     if not started or controller.state(session, "paused"):
         return
@@ -70,6 +72,15 @@ def recover_delivery(session: Session, controller: BotController) -> None:
 
 def prepare_message(session: Session, controller: BotController) -> BotMessage | None:
     if controller.owner_id not in controller.allowed_user_ids(session):
+        session.execute(
+            update(BotMessage)
+            .where(
+                BotMessage.dedup_key.startswith(f"{controller.scope}:"),
+                BotMessage.status == "pending",
+            )
+            .values(status="cancelled")
+        )
+        session.commit()
         return None
     now = utcnow()
     rate_limit = controller.state(session, "delivery_after")
@@ -144,6 +155,11 @@ async def deliver_one(client, sessions, controller: BotController) -> bool:  # n
         if message is None:
             return False
         identifier, method, payload = message.id, message.method, message.payload
+    with sessions() as session:
+        if controller.owner_id not in controller.allowed_user_ids(session):
+            session.get(BotMessage, identifier).status = "cancelled"
+            session.commit()
+            return False
     status, error, delay = "sent", None, 0
     fallback = False
     try:

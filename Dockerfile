@@ -10,7 +10,8 @@ ENV PLAYWRIGHT_BROWSERS_PATH=/opt/playwright
 
 WORKDIR /app
 COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt \
+RUN python -m pip install --no-cache-dir --upgrade pip==26.3 \
+    && pip install --no-cache-dir -r requirements.txt \
     && python -m playwright install --with-deps --only-shell chromium \
     && rm -rf /var/lib/apt/lists/* \
     && chmod -R a+rX /opt/playwright \

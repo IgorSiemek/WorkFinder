@@ -2,7 +2,7 @@ import asyncio
 import hashlib
 import json
 from concurrent.futures import ThreadPoolExecutor
-from contextlib import suppress
+from contextlib import closing, suppress
 from datetime import date
 from pathlib import Path
 from types import SimpleNamespace
@@ -30,7 +30,7 @@ from app.services.backups import backup_database, backup_directory
 from app.services.jobs import get_job, list_jobs
 from app.telegram import runtime
 from app.telegram.controller import BotController
-from app.telegram.delivery import deliver_one, queue_notifications
+from app.telegram.delivery import deliver_one, prepare_message, queue_notifications
 
 
 def make_job(**values):
@@ -115,11 +115,63 @@ def original(tmp_path, monkeypatch):
     bind.dispose()
 
 
-def make_profile(tmp_path, key="friend", **scope):
+def make_profile(tmp_path, key="friend", owner=None, **scope):
     store = ProfileStore(tmp_path / "profiles")
     token = store.create(key, personal_config(**scope))
+    if owner is not None:
+        assert store.claim(token, owner, reserved=set())
     context, config = store.open(key)
     return store, token, context, config
+
+
+def test_disabled_profile_cancels_notifications_before_delivery(tmp_path):
+    store, _, context, config = make_profile(tmp_path, owner=100)
+    controller = PersonalController(100, config)
+    calls = []
+
+    class Client:
+        async def call(self, method, **payload):
+            calls.append((method, payload))
+
+    try:
+        with activate_profile(context), SessionLocal() as session:
+            controller.queue(session, "update:1", {"text": "private"})
+            session.commit()
+            assert controller.allowed_user_ids(session) == [100]
+            with closing(store.connect()) as registry, registry:
+                registry.execute("UPDATE profiles SET enabled=0 WHERE profile_key='friend'")
+            assert controller.allowed_user_ids(session) == []
+            assert prepare_message(session, controller) is None
+            assert session.scalar(select(BotMessage)).status == "cancelled"
+            assert not asyncio.run(deliver_one(Client(), SessionLocal, controller))
+            assert calls == []
+    finally:
+        context.engine.dispose()
+
+
+def test_disabled_profile_worker_stops_and_cancels_pending_messages(original, tmp_path):
+    legacy, _ = original
+    store, _, context, config = make_profile(tmp_path, owner=100)
+    controller = PersonalController(100, config)
+    router = ProfileRouter(runtime.BotRuntime(None, legacy), store)
+
+    async def exercise():
+        task = asyncio.create_task(asyncio.Event().wait())
+        router.children["friend"] = (context, None, task)
+        with activate_profile(context), SessionLocal() as session:
+            controller.queue(session, "update:1", {"text": "private"})
+            session.commit()
+        await router.stop_child("friend")
+        assert task.cancelled()
+        assert "friend" not in router.children
+        with activate_profile(context), SessionLocal() as session:
+            assert session.scalar(select(BotMessage)).status == "cancelled"
+        await router.stop_child("friend")
+
+    try:
+        asyncio.run(exercise())
+    finally:
+        context.engine.dispose()
 
 
 def test_provisioning_does_not_change_original_database_or_json(original, tmp_path):
@@ -319,7 +371,7 @@ def test_workday_regular_roles_remote_and_multiple_locations_are_configurable(
 
 def test_cv_backups_notifications_and_scheduler_use_private_database(original, tmp_path):
     legacy, sessions = original
-    _, _, context, config = make_profile(tmp_path)
+    _, _, context, config = make_profile(tmp_path, owner=100)
     private = PersonalController(100, config)
 
     class Client:
@@ -444,7 +496,7 @@ def test_router_keeps_legacy_shared_access_and_private_callbacks_separate(
 
 
 def test_queued_private_jobs_are_rechecked_after_requirements_change(tmp_path):
-    _, _, context, config = make_profile(tmp_path)
+    _, _, context, config = make_profile(tmp_path, owner=100)
     controller = PersonalController(100, config)
     try:
         with activate_profile(context), SessionLocal() as session:
@@ -635,7 +687,7 @@ def test_profile_routing_is_opt_in_at_startup(tmp_path, monkeypatch, registry_ex
 
 def test_private_reload_validates_before_mutation_and_preserves_original(original, tmp_path):
     _, sessions = original
-    _, _, context, config = make_profile(tmp_path)
+    _, _, context, config = make_profile(tmp_path, owner=100)
     controller = PersonalController(100, config)
     try:
         with activate_profile(context), SessionLocal() as session:

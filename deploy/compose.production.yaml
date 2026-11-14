@@ -1,0 +1,41 @@
+name: workfinder
+services:
+  workfinder:
+    image: workfinder:${APP_BUILD_REF:?Set APP_BUILD_REF}
+    restart: unless-stopped
+    init: true
+    user: "10001:10001"
+    read_only: true
+    cap_drop: [ALL]
+    cap_add: [SYS_CHROOT]
+    security_opt:
+      - no-new-privileges:true
+      - apparmor=workfinder-browser
+      - seccomp=/usr/local/share/workfinder/seccomp-chromium.json
+    tmpfs:
+      - /tmp:rw,nosuid,nodev,size=256m,mode=1777
+      - /home/workfinder:rw,nosuid,nodev,size=16m,uid=10001,gid=10001,mode=700
+    mem_limit: 1536m
+    pids_limit: 256
+    cpus: 1.5
+    shm_size: 256mb
+    stop_grace_period: 2m
+    env_file: /opt/workfinder/.env
+    environment:
+      DATABASE_URL: sqlite:////app/data/workfinder.db
+      WORKFINDER_CONFIG: /app/data/config.json
+      BACKUP_DIR: /app/data/backups
+      APP_BUILD_REF: ${APP_BUILD_REF}
+    volumes:
+      - /opt/workfinder/data:/app/data
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+        max-file: "3"
+    healthcheck:
+      test: ["CMD", "python", "-m", "app.cli", "healthcheck"]
+      interval: 15s
+      timeout: 5s
+      start_period: 30s
+      retries: 4
