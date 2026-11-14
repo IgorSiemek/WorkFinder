@@ -2,7 +2,9 @@
 set -euo pipefail
 export PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 export HOME=/root
-umask 077
+# Git-created source files must remain readable by the container's runtime user.
+# Secret files and database backups use explicit restrictive modes.
+umask 022
 [[ $# == 1 && "$1" =~ ^[0-9a-f]{40}$ ]]
 deploy_sha="$1"
 exec 9>/run/lock/workfinder-deploy.lock
