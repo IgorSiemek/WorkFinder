@@ -35,13 +35,17 @@ def backup_database(bind: Engine | None = None, *, force: bool = False) -> Path 
     if bind.dialect.name != "sqlite" or not bind.url.database or bind.url.database == ":memory:":
         return None
     directory = backup_directory()
-    directory.mkdir(parents=True, exist_ok=True)
+    directory.mkdir(parents=True, exist_ok=True, mode=0o700)
+    directory.chmod(0o700)
     stamp = datetime.now(UTC).strftime("%Y%m%d-%H%M%S-%f" if force else "%Y%m%d")
     destination = directory / f"workfinder-{stamp}.sqlite3"
     if destination.exists():
+        destination.chmod(0o600)
         return destination
     temporary = directory / f".{uuid4().hex}.tmp"
     try:
+        descriptor = os.open(temporary, os.O_CREAT | os.O_EXCL | os.O_RDWR, 0o600)
+        os.close(descriptor)
         raw = bind.raw_connection()
         try:
             with closing(sqlite3.connect(temporary)) as target:

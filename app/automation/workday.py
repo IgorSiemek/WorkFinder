@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import re
 from contextlib import suppress
 from pathlib import Path
@@ -124,7 +125,14 @@ class WorkdayForm:
         directory.mkdir(parents=True, exist_ok=True, mode=0o700)
         self.storage_path = directory / (self.host + ".json")
         self.playwright = await async_playwright().start()
-        self.browser = await self.playwright.chromium.launch(headless=True)
+        browser_env = {
+            key: os.environ[key]
+            for key in ("HOME", "PATH", "LANG", "LC_ALL", "TMPDIR", "SYSTEMROOT", "WINDIR")
+            if key in os.environ
+        }
+        self.browser = await self.playwright.chromium.launch(
+            headless=True, chromium_sandbox=True, env=browser_env,
+        )
         self.context = await self.browser.new_context(
             storage_state=self.storage_path if self.storage_path.exists() else None,
             accept_downloads=False,

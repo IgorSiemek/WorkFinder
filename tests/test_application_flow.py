@@ -6,12 +6,42 @@ import pytest
 from sqlalchemy import select
 from sqlalchemy.orm import sessionmaker
 
-from app.automation import worker
+from app.automation import workday, worker
 from app.models import ApplicationDraft, BotMessage, Job, utcnow
 from app.services import applications
 from app.services.bot_config import validate_config
 from app.telegram.controller import BotController
 from app.telegram.views import job_card
+
+
+def test_browser_launch_enables_sandbox_and_excludes_application_secrets(tmp_path, monkeypatch):
+    captured = {}
+
+    class CapturedLaunch(Exception):
+        pass
+
+    class Chromium:
+        async def launch(self, **options):
+            captured.update(options)
+            raise CapturedLaunch
+
+    class Playwright:
+        async def start(self):
+            return SimpleNamespace(chromium=Chromium())
+
+    monkeypatch.setattr(workday, "async_playwright", Playwright)
+    monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "fixture-secret")
+    monkeypatch.setenv("UNRELATED_PRIVATE_SETTING", "fixture-secret")
+    job = SimpleNamespace(
+        source="Motorola Solutions Careers",
+        company="Motorola Solutions",
+        original_url="https://motorolasolutions.wd5.myworkdayjobs.com/en-US/Careers/job/Krakow/Intern_R1",
+    )
+    with pytest.raises(CapturedLaunch):
+        asyncio.run(workday.WorkdayForm().start(job, {}, {}, tmp_path))
+    assert captured["chromium_sandbox"] is True
+    assert "TELEGRAM_BOT_TOKEN" not in captured["env"]
+    assert "UNRELATED_PRIVATE_SETTING" not in captured["env"]
 
 
 @pytest.fixture

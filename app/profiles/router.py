@@ -4,10 +4,14 @@ import asyncio
 import logging
 from contextlib import suppress
 
+from sqlalchemy import select, update
+
 from app.database import SessionLocal
+from app.models import ApplicationDraft, BotMessage
 from app.profiles.context import activate_profile
 from app.profiles.controller import PersonalController
 from app.profiles.store import ProfileStore
+from app.services.applications import ACTIVE
 
 logger = logging.getLogger(__name__)
 
@@ -71,6 +75,34 @@ class ProfileRouter:
             # A broken friend's profile must not stop the original user's workers.
             logger.exception("Private profile worker stopped")
 
+    async def stop_child(self, key):
+        async with self.lock:
+            child = self.children.pop(key, None)
+            if child is None:
+                return
+            context, _, task = child
+            task.cancel()
+            try:
+                with suppress(asyncio.CancelledError):
+                    await task
+                with activate_profile(context), SessionLocal() as session:
+                    session.execute(
+                        update(BotMessage)
+                        .where(BotMessage.status == "pending")
+                        .values(status="cancelled")
+                    )
+                    for draft in session.scalars(
+                        select(ApplicationDraft).where(ApplicationDraft.status.in_(ACTIVE))
+                    ):
+                        draft.status = "uncertain" if draft.status == "submitting" else "cancelled"
+                        draft.action = {}
+                        draft.revision += 1
+                    session.commit()
+            except Exception:
+                logger.exception("Cannot clean up disabled private profile")
+            finally:
+                context.engine.dispose()
+
     async def dispatch(self, update: dict) -> bool:
         offset, reserved = await asyncio.to_thread(self.legacy_state)
         if update["update_id"] < offset:
@@ -113,6 +145,7 @@ class ProfileRouter:
         if record is None:
             return await asyncio.to_thread(self.legacy.handle_update, update)
         if not record["enabled"]:
+            await self.stop_child(record["profile_key"])
             await asyncio.to_thread(self.acknowledge, update["update_id"])
             return False
         try:
@@ -141,6 +174,9 @@ class ProfileRouter:
                     )
                     records = []
                 for record in records:
+                    if not record["enabled"]:
+                        await self.stop_child(record["profile_key"])
+                        continue
                     if record["enabled"] and record["user_id"] is not None:
                         child = self.children.get(record["profile_key"])
                         if child is None or child[2].done():

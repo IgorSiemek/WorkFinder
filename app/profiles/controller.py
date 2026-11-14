@@ -1,15 +1,26 @@
 from __future__ import annotations
 
+import sqlite3
+
 from app.models import utcnow
 from app.profiles.context import current_profile
-from app.profiles.store import validate_personal_config
+from app.profiles.store import ProfileStore, validate_personal_config
 from app.services.bot_config import apply_config, load_config, next_search
 from app.telegram.controller import BotController
 
 
 class PersonalController(BotController):
     def allowed_user_ids(self, session):
-        return [self.owner_id]
+        profile = current_profile()
+        if profile is None:
+            return []
+        try:
+            record = ProfileStore(profile.directory.parent).for_user(self.owner_id)
+        except (OSError, sqlite3.Error):
+            return []
+        if record and record["enabled"] and record["profile_key"] == profile.key:
+            return [self.owner_id]
+        return []
 
     def for_user(self, user_id):
         if user_id != self.owner_id:

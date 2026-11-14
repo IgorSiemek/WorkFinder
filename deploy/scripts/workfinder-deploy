@@ -1,0 +1,58 @@
+#!/bin/bash
+set -euo pipefail
+export PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+export HOME=/root
+# Git-created source files must remain readable by the container's runtime user.
+# Secret files and database backups use explicit restrictive modes.
+umask 022
+[[ $# == 1 && "$1" =~ ^[0-9a-f]{40}$ ]]
+deploy_sha="$1"
+exec 9>/run/lock/workfinder-deploy.lock
+flock -w 900 9
+cd /opt/workfinder
+git diff --quiet
+git diff --cached --quiet
+git fetch origin main
+if [[ "$(git rev-parse origin/main)" != "$deploy_sha" ]]; then
+  echo 'A newer main commit is available. Its workflow will deploy it.'
+  exit 0
+fi
+previous_sha="$(git rev-parse HEAD)"
+git checkout --detach "$deploy_sha"
+# Infrastructure is installed separately by an administrator and remains root-owned.
+for file in Dockerfile deploy/compose.production.yaml deploy/seccomp-chromium.json; do
+  case "$file" in
+    Dockerfile) installed=/usr/local/share/workfinder/Dockerfile ;;
+    deploy/compose.production.yaml) installed=/usr/local/share/workfinder/compose.yaml ;;
+    *) installed=/usr/local/share/workfinder/seccomp-chromium.json ;;
+  esac
+  if ! cmp --silent "$file" "$installed"; then
+    git checkout --detach "$previous_sha"
+    echo 'Infrastructure changed. Install the reviewed deployment files as administrator.' >&2
+    exit 1
+  fi
+done
+compose=(docker compose --project-directory /opt/workfinder -f /usr/local/share/workfinder/compose.yaml)
+export APP_BUILD_REF="$previous_sha"
+if ! "${compose[@]}" exec -T workfinder python -m app.cli backup </dev/null; then
+  git checkout --detach "$previous_sha"
+  exit 1
+fi
+export APP_BUILD_REF="$deploy_sha"
+if ! docker build --pull --file /usr/local/share/workfinder/Dockerfile \
+  --build-arg VCS_REF="$deploy_sha" -t "workfinder:$deploy_sha" .; then
+  git checkout --detach "$previous_sha"
+  exit 1
+fi
+if ! "${compose[@]}" up --no-build -d --wait --wait-timeout 180; then
+  git checkout --detach "$previous_sha"
+  export APP_BUILD_REF="$previous_sha"
+  "${compose[@]}" up --no-build -d --wait --wait-timeout 180
+  echo 'Deployment failed. The previous image was restarted.' >&2
+  exit 1
+fi
+container_id="$("${compose[@]}" ps -q workfinder)"
+test -n "$container_id"
+running_ref="$(docker inspect "$container_id" --format '{{index .Config.Labels "org.opencontainers.image.revision"}}')"
+test "$running_ref" = "$deploy_sha"
+"${compose[@]}" ps

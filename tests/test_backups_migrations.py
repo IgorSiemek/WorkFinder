@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import sqlite3
 from contextlib import closing
 from datetime import date
@@ -24,7 +25,13 @@ def test_online_backup_contains_committed_data_and_is_idempotent(tmp_path, monke
             connection.execute(text("CREATE TABLE progress (status TEXT)"))
             connection.execute(text("INSERT INTO progress VALUES ('Applied')"))
         first = backups.backup_database(bind)
+        if os.name == "posix":
+            assert first.stat().st_mode & 0o777 == 0o600
+            assert first.parent.stat().st_mode & 0o777 == 0o700
+            first.chmod(0o644)
         assert first == backups.backup_database(bind)
+        if os.name == "posix":
+            assert first.stat().st_mode & 0o777 == 0o600
         with closing(sqlite3.connect(first)) as saved:
             assert saved.execute("SELECT status FROM progress").fetchone()[0] == "Applied"
             assert saved.execute("PRAGMA quick_check").fetchone()[0] == "ok"

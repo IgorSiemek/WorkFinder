@@ -12,23 +12,40 @@ permissions:
 jobs:
   quality:
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 20
     steps:
-      - uses: actions/checkout@v6
-      - uses: actions/setup-python@v6
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
         with:
           python-version: "3.12"
           cache: pip
-      - run: python -m pip install -r requirements.txt
-      - run: python -m playwright install --with-deps --only-shell chromium
+      - run: python -m pip install --upgrade pip==26.3 && python -m pip install -r requirements-dev.txt
       - run: python -m ruff check .
       - run: python -m pytest
-        env:
-          RUN_BROWSER_TESTS: "1"
       - name: Build and smoke test the production image
         run: |
+          sudo apparmor_parser -r deploy/apparmor-workfinder
           docker build --build-arg VCS_REF="$GITHUB_SHA" -t workfinder:ci .
-          docker run --rm workfinder:ci python -m app.cli init
+          docker run --rm --read-only --tmpfs /tmp --tmpfs /home/workfinder:uid=10001,gid=10001 \
+            --cap-drop ALL --cap-add SYS_CHROOT --security-opt no-new-privileges:true \
+            --security-opt apparmor=workfinder-browser \
+            --security-opt seccomp=deploy/seccomp-chromium.json \
+            --tmpfs /app/data:uid=10001,gid=10001 workfinder:ci python -m app.cli init
+          docker build -t workfinder:ci-tests -f - . <<'DOCKERFILE'
+          FROM workfinder:ci
+          USER root
+          COPY requirements-dev.txt requirements.txt /tmp/test-requirements/
+          RUN pip install -r /tmp/test-requirements/requirements-dev.txt
+          USER workfinder
+          DOCKERFILE
+          docker run --rm --read-only --network none --shm-size 256m \
+            --tmpfs /tmp --tmpfs /home/workfinder:uid=10001,gid=10001 \
+            --tmpfs /app/data:uid=10001,gid=10001 \
+            --cap-drop ALL --cap-add SYS_CHROOT --security-opt no-new-privileges:true \
+            --security-opt apparmor=workfinder-browser \
+            --security-opt seccomp=deploy/seccomp-chromium.json \
+            -e RUN_BROWSER_TESTS=1 -v "$GITHUB_WORKSPACE/tests:/tests:ro" \
+            workfinder:ci-tests python -m pytest /tests/test_application_browser.py -q -p no:cacheprovider
 
   deploy:
     needs: quality
@@ -40,54 +57,29 @@ jobs:
       group: workfinder-production
       cancel-in-progress: false
     env:
-      PROD_VM_HOST: ${{ vars.PROD_VM_HOST || secrets.PROD_VM_HOST }}
-      PROD_VM_USER: ${{ vars.PROD_VM_USER || secrets.PROD_VM_USER }}
-      PROD_VM_SSH_PORT: ${{ vars.PROD_VM_SSH_PORT || secrets.PROD_VM_SSH_PORT || '22' }}
-      PROD_VM_APP_DIR: ${{ vars.PROD_VM_APP_DIR || '/opt/workfinder' }}
+      PROD_VM_HOST: ${{ vars.PROD_VM_HOST }}
+      PROD_VM_USER: ${{ vars.PROD_VM_USER }}
+      PROD_VM_SSH_PORT: ${{ vars.PROD_VM_SSH_PORT || '22' }}
+      PROD_VM_SSH_HOST_KEY: ${{ vars.PROD_VM_SSH_HOST_KEY }}
     steps:
-      - name: Validate deployment settings
+      - name: Deploy the tested commit through the restricted SSH command
         env:
           SSH_KEY: ${{ secrets.PROD_VM_SSH_PRIVATE_KEY }}
         run: |
           set -euo pipefail
-          for key in PROD_VM_HOST PROD_VM_USER SSH_KEY; do
-            test -n "${!key}" || { echo "Missing GitHub variable or secret: $key"; exit 1; }
+          for key in PROD_VM_HOST PROD_VM_USER PROD_VM_SSH_HOST_KEY SSH_KEY; do
+            test -n "${!key}" || { echo "Missing deployment setting $key"; exit 1; }
           done
-          [[ "$PROD_VM_APP_DIR" =~ ^/[a-zA-Z0-9_./-]+$ ]]
+          [[ "$PROD_VM_HOST" =~ ^[a-zA-Z0-9.-]+$ ]]
+          [[ "$PROD_VM_USER" =~ ^[a-zA-Z0-9_-]+$ ]]
           [[ "$PROD_VM_SSH_PORT" =~ ^[0-9]+$ ]]
-      - name: Start SSH agent
-        uses: webfactory/ssh-agent@v0.9.0
-        with:
-          ssh-private-key: ${{ secrets.PROD_VM_SSH_PRIVATE_KEY }}
-      - name: Deploy the tested commit
-        run: |
-          set -euo pipefail
+          umask 077
           mkdir -p ~/.ssh
-          chmod 700 ~/.ssh
-          ssh -o StrictHostKeyChecking=accept-new -o ConnectTimeout=15 \
-            -p "$PROD_VM_SSH_PORT" "$PROD_VM_USER@$PROD_VM_HOST" \
-            "bash -s -- '$PROD_VM_APP_DIR' '$GITHUB_SHA'" <<'REMOTE'
-          set -euo pipefail
-          app_dir="$1"
-          deploy_sha="$2"
-          cd "$app_dir"
-          git diff --quiet
-          git diff --cached --quiet
-          git fetch origin main
-          test "$(git rev-parse origin/main)" = "$deploy_sha" || {
-            echo "A newer commit is available. Its workflow will deploy the new version."
-            exit 0
-          }
-          git checkout --detach "$deploy_sha"
-          test -s .env
-          test -d data
-          export APP_BUILD_REF="$deploy_sha"
-          docker compose config --quiet
-          docker compose build --pull
-          docker compose up -d --wait --wait-timeout 150
-          container_id="$(docker compose ps -q workfinder)"
-          test -n "$container_id"
-          running_ref="$(docker inspect "$container_id" --format '{{index .Config.Labels "org.opencontainers.image.revision"}}')"
-          test "$running_ref" = "$deploy_sha"
-          docker compose ps
-          REMOTE
+          printf '%s\n' "$SSH_KEY" > ~/.ssh/workfinder_deploy
+          trap 'rm -f ~/.ssh/workfinder_deploy' EXIT
+          host="$PROD_VM_HOST"
+          if [[ "$PROD_VM_SSH_PORT" != 22 ]]; then host="[$host]:$PROD_VM_SSH_PORT"; fi
+          printf '%s %s\n' "$host" "$PROD_VM_SSH_HOST_KEY" > ~/.ssh/known_hosts
+          ssh -o StrictHostKeyChecking=yes -o IdentitiesOnly=yes -o BatchMode=yes \
+            -o ConnectTimeout=15 -i ~/.ssh/workfinder_deploy \
+            -p "$PROD_VM_SSH_PORT" "$PROD_VM_USER@$PROD_VM_HOST" "deploy $GITHUB_SHA"
