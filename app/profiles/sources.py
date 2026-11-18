@@ -9,6 +9,7 @@ from app.scrapers.base import JobPosting, SearchCriteria
 from app.scrapers.common import plain_text
 from app.scrapers.publication_dates import PublicationDate, date_evidence, source_date
 from app.scrapers.workday import WorkdaySource
+from app.scrapers.workday_limits import WorkdayRateLimited
 
 
 class PersonalWorkdaySource(WorkdaySource):
@@ -25,6 +26,7 @@ class PersonalWorkdaySource(WorkdaySource):
         if scope["remote_allowed"]:
             queries.extend(scope["titles"] or [""])
         self.scan_complete = self.can_confirm_absence = False
+        self.last_search_note = ""
         complete = True
         seen = set()
         jobs = []
@@ -32,20 +34,13 @@ class PersonalWorkdaySource(WorkdaySource):
             offset, query_complete = 0, False
             query_paths = set()
             while offset < 200:
-                response = httpx.post(
-                    self.api_url,
-                    json={
-                        "appliedFacets": {},
-                        "limit": 20,
-                        "offset": offset,
-                        "searchText": query,
-                    },
-                    timeout=settings.request_timeout_seconds,
-                    headers={"User-Agent": settings.user_agent},
-                    follow_redirects=True,
-                )
-                response.raise_for_status()
-                data = response.json()
+                try:
+                    data = self.search_page(query, offset)
+                except WorkdayRateLimited as exc:
+                    if not jobs:
+                        raise
+                    self.last_search_note = str(exc)
+                    return jobs
                 records = data.get("jobPostings")
                 if not isinstance(records, list) or "total" not in data:
                     raise ValueError("Workday returned no verifiable result set")
@@ -130,9 +125,8 @@ class PersonalWorkdaySource(WorkdaySource):
                     break
             complete = complete and query_complete
         self.scan_complete = self.can_confirm_absence = complete
-        self.last_search_note = (
-            "" if complete else "Result limit reached or job details unavailable"
-        )
+        if not complete and not self.last_search_note:
+            self.last_search_note = "Result limit reached or job details unavailable"
         return jobs
 
 

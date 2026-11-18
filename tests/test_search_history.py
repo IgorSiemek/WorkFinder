@@ -1,12 +1,20 @@
 from __future__ import annotations
 
+from datetime import UTC, datetime, timedelta
+
+import httpx
 import pytest
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.models import ProviderRun, SearchObservation, SearchRun
 from app.scrapers.base import JobPosting
+from app.scrapers.publication_dates import lookup_publication_date
+from app.scrapers.workday import WorkdayConfig, WorkdaySource
+from app.scrapers.workday_limits import WorkdayRateLimited
 from app.services import search
+from app.services.bot_config import validate_config
+from app.telegram.controller import BotController
 
 
 def test_search_preserves_decisions_and_isolates_bad_offer(
@@ -122,3 +130,42 @@ def test_incomplete_scan_is_visible_in_provider_history(session, monkeypatch) ->
     search.run_search(session)
     provider = session.scalar(select(ProviderRun))
     assert provider.status == "partial" and "incomplete" in provider.error_message
+
+
+def test_workday_cooldown_is_visible_and_skips_requests_to_the_same_host(
+    session: Session, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    host = "cooldown.wd5.myworkdayjobs.com"
+    source = WorkdaySource(WorkdayConfig("Limited Careers", "Example", host, "tenant", "Careers"))
+    other = WorkdaySource(
+        WorkdayConfig("Other Careers", "Other", "other.example", "tenant", "Careers")
+    )
+    calls = []
+
+    def post(url: str, **kwargs) -> httpx.Response:  # noqa: ANN003
+        calls.append(url)
+        request = httpx.Request("POST", url)
+        if url == source.api_url:
+            return httpx.Response(429, headers={"Retry-After": "120"}, request=request)
+        return httpx.Response(200, json={"total": 0, "jobPostings": []}, request=request)
+
+    def unexpected_get(*args, **kwargs):  # noqa: ANN002, ANN003, ANN202
+        raise AssertionError("Publication lookup must respect the existing Workday cooldown")
+
+    monkeypatch.setattr(httpx, "post", post)
+    monkeypatch.setattr(httpx, "get", unexpected_get)
+    monkeypatch.setattr(search, "enabled_sources", lambda: [source, other])
+    start = datetime.now(UTC)
+    run = search.run_search(session)
+    statuses = {provider.provider: provider.status for provider in run.provider_runs}
+    assert statuses == {"Limited Careers": "rate_limited", "Other Careers": "success"}
+    assert run.errors == 1 and run.status == "completed_with_errors"
+    health = BotController(42, validate_config({})).health(session)["text"]
+    assert "Limited Careers · rate_limited · Workday HTTP 429" in health
+    with pytest.raises(WorkdayRateLimited) as skipped:
+        source.search_page("Krakow", 0)
+    assert start + timedelta(minutes=2) <= skipped.value.retry_at
+    assert skipped.value.retry_at <= datetime.now(UTC) + timedelta(minutes=2)
+    result, _ = lookup_publication_date(f"https://{host}/en-US/Careers/job/Krakow/Test", "Test")
+    assert result.value is None
+    assert sorted(calls) == sorted([source.api_url, other.api_url])

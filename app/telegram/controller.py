@@ -708,8 +708,12 @@ class BotController:
             lines.append(f"Ostatnie wyszukiwanie · {run.started_at:%Y-%m-%d %H:%M} UTC")
             lines.append(f"{escape(run.status)} · nowych {run.new_jobs} · błędów {run.errors}")
             for provider in run.provider_runs:
-                if provider.status != "success":
-                    lines.append(escape(f"{provider.provider} · {provider.status}"))
+                if provider.status == "success":
+                    continue
+                line = f"{provider.provider} · {provider.status}"
+                if provider.status in {"rate_limited", "partial"} and provider.error_message:
+                    line += f" · {provider.error_message[:100]}"
+                lines.append(escape(line))
         else:
             lines.append("Pierwsze wyszukiwanie przed Tobą.")
         counts = session.execute(
