@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import re
+from contextlib import nullcontext
 from dataclasses import dataclass
 from datetime import UTC, date, datetime, timedelta
 from html.parser import HTMLParser
@@ -11,6 +12,7 @@ import httpx
 
 from app.config import settings
 from app.scrapers.common import parse_date, plain_text
+from app.scrapers.workday_limits import workday_access
 
 
 @dataclass(frozen=True)
@@ -207,19 +209,22 @@ def lookup_publication_date(url: str, title: str) -> tuple[PublicationDate, dict
             url = f"https://{parsed.hostname}{path}"
     try:
         for _ in range(5):
-            response = httpx.get(
-                url,
-                timeout=min(settings.request_timeout_seconds, 5),
-                headers={"User-Agent": settings.user_agent},
-                follow_redirects=False,
-            )
+            is_workday = (urlsplit(url).hostname or "").endswith(".myworkdayjobs.com")
+            with workday_access(url) if is_workday else nullcontext():
+                response = httpx.get(
+                    url,
+                    timeout=min(settings.request_timeout_seconds, 5),
+                    headers={"User-Agent": settings.user_agent},
+                    follow_redirects=False,
+                )
+                if not response.is_redirect:
+                    response.raise_for_status()
             if response.is_redirect:
                 redirected = urljoin(url, response.headers.get("location", ""))
                 if not supported_url(redirected):
                     raise ValueError("Unrecognized careers redirect")
                 url = redirected
                 continue
-            response.raise_for_status()
             if "/wday/cxs/" in urlsplit(url).path:
                 data = response.json().get("jobPostingInfo", {})
                 posted = source_date(data.get("startDate"))

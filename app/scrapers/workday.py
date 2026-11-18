@@ -9,6 +9,7 @@ from app.config import settings
 from app.scrapers.base import JobPosting, JobSource, SearchCriteria
 from app.scrapers.common import is_internship_role, plain_text, relevant_to_krakow
 from app.scrapers.publication_dates import PublicationDate, date_evidence, source_date
+from app.scrapers.workday_limits import WorkdayRateLimited, workday_access
 
 logger = logging.getLogger(__name__)
 
@@ -35,19 +36,35 @@ class WorkdaySource(JobSource):
     def api_url(self) -> str:
         return f"https://{self.config.host}/wday/cxs/{self.config.tenant}/{self.config.site}/jobs"
 
-    def posting_details(self, path: str) -> dict:
-        url = self.api_url.removesuffix("/jobs") + path
-        try:
-            response = httpx.get(
-                url,
-                timeout=min(settings.request_timeout_seconds, 5),
+    def search_page(self, query: str, offset: int) -> dict:
+        with workday_access(self.api_url):
+            response = httpx.post(
+                self.api_url,
+                json={"appliedFacets": {}, "limit": 20, "offset": offset, "searchText": query},
+                timeout=settings.request_timeout_seconds,
                 headers={"User-Agent": settings.user_agent},
                 follow_redirects=True,
             )
             response.raise_for_status()
+        return response.json()
+
+    def posting_details(self, path: str) -> dict:
+        url = self.api_url.removesuffix("/jobs") + path
+        try:
+            with workday_access(url):
+                response = httpx.get(
+                    url,
+                    timeout=min(settings.request_timeout_seconds, 5),
+                    headers={"User-Agent": settings.user_agent},
+                    follow_redirects=True,
+                )
+                response.raise_for_status()
             payload = response.json()
             details = payload.get("jobPostingInfo") if isinstance(payload, dict) else None
             return details if isinstance(details, dict) else {}
+        except WorkdayRateLimited as exc:
+            self.last_search_note = str(exc)
+            return {}
         except (httpx.HTTPError, ValueError):
             logger.warning("Posting date unavailable for %s", url)
             return {}
@@ -55,26 +72,20 @@ class WorkdaySource(JobSource):
     def search_jobs(self, criteria: SearchCriteria) -> list[JobPosting]:
         self.can_confirm_absence = False
         self.scan_complete = False
+        self.last_search_note = ""
         missing_locations = False
         jobs: list[JobPosting] = []
         seen_paths: set[str] = set()
         keywords = [keyword.casefold() for keyword in criteria.keywords]
         offset = 0
         while offset < 200:
-            response = httpx.post(
-                self.api_url,
-                json={
-                    "appliedFacets": {},
-                    "limit": 20,
-                    "offset": offset,
-                    "searchText": self.config.search_text,
-                },
-                timeout=settings.request_timeout_seconds,
-                headers={"User-Agent": settings.user_agent},
-                follow_redirects=True,
-            )
-            response.raise_for_status()
-            payload = response.json()
+            try:
+                payload = self.search_page(self.config.search_text, offset)
+            except WorkdayRateLimited as exc:
+                if not jobs:
+                    raise
+                self.last_search_note = str(exc)
+                return jobs
             postings = payload.get("jobPostings", [])
             total = int(payload["total"]) if "total" in payload else None
             if not postings:
@@ -138,11 +149,10 @@ class WorkdaySource(JobSource):
             if total is not None and offset >= total:
                 self.can_confirm_absence = True
                 break
-        self.can_confirm_absence = self.can_confirm_absence and not missing_locations
-        self.scan_complete = self.can_confirm_absence
-        self.last_search_note = (
-            ""
-            if self.scan_complete
-            else "Result limit reached or multi-location details unavailable"
+        self.can_confirm_absence = (
+            self.can_confirm_absence and not missing_locations and not self.last_search_note
         )
+        self.scan_complete = self.can_confirm_absence
+        if not self.scan_complete and not self.last_search_note:
+            self.last_search_note = "Result limit reached or multi-location details unavailable"
         return jobs

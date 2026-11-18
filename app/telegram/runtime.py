@@ -108,13 +108,21 @@ class BotRuntime:
         with SessionLocal() as session:
             try:
                 result = run_search(session, source_names=controller.config["sources"])
+                rate_limited = sum(
+                    provider.status == "rate_limited" for provider in result.provider_runs
+                )
+                limit_note = (
+                    f"Źródeł pominiętych przez limit HTTP 429 · {rate_limited}\n"
+                    if rate_limited
+                    else ""
+                )
                 self.notify_search(
                     session,
                     f"search:{result.id}",
                     (
                         "<b>Wyszukiwanie zakończone</b>\n"
                         f"Nowych ofert · {result.new_jobs}\nZnalezionych · {result.jobs_found}\n"
-                        f"Błędów źródeł · {result.errors}\n"
+                        f"Błędów · {result.errors}\n{limit_note}"
                         "Przeglądaj pod /new. Stan źródeł pod /health."
                     ),
                 )

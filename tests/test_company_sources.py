@@ -88,6 +88,38 @@ def test_workday_keeps_offer_when_publication_date_lookup_fails(monkeypatch) -> 
     assert source.can_confirm_absence
 
 
+def test_workday_keeps_first_page_when_the_next_page_is_rate_limited(monkeypatch) -> None:  # noqa: ANN001
+    source = WorkdaySource(
+        WorkdayConfig("Paged Careers", "Example", "paged.example", "example", "Careers")
+    )
+
+    def post(url: str, *, json: dict, **kwargs) -> httpx.Response:  # noqa: ANN003
+        request = httpx.Request("POST", url)
+        if json["offset"]:
+            return httpx.Response(429, request=request)
+        return httpx.Response(
+            200,
+            request=request,
+            json={
+                "total": 2,
+                "jobPostings": [
+                    {
+                        "title": "Finance Intern",
+                        "locationsText": "Krakow, Poland",
+                        "externalPath": "/job/Krakow/Finance-Intern_R1",
+                    }
+                ],
+            },
+        )
+
+    monkeypatch.setattr(httpx, "post", post)
+    monkeypatch.setattr(source, "posting_details", lambda path: {})
+    jobs = source.search_jobs(SearchCriteria(keywords=["finance"]))
+    assert [job.source_job_id for job in jobs] == ["R1"]
+    assert not source.scan_complete and not source.can_confirm_absence
+    assert "HTTP 429" in source.last_search_note
+
+
 def test_career_page_requires_relevant_title_and_krakow_context(monkeypatch) -> None:  # noqa: ANN001
     html = """
     <section>Kraków, Poland <a href="/job/123">Finance Trainee</a></section>

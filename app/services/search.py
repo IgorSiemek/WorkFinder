@@ -23,6 +23,7 @@ from app.profiles.scope import active_scope, job_filter, location_matches, role_
 from app.scrapers.base import JobPosting, SearchCriteria
 from app.scrapers.common import INTERNSHIP_KEYWORDS
 from app.scrapers.registry import enabled_sources
+from app.scrapers.workday_limits import WorkdayRateLimited
 from app.services.backups import automatic_backup
 from app.services.deduplication import find_duplicate
 from app.services.ignoring import apply_ignore_rules
@@ -203,6 +204,8 @@ def run_search(session: Session, *, source_names: list[str] | None = None) -> Se
                 )
                 session.add(provider_run)
                 if error:
+                    if isinstance(error, WorkdayRateLimited):
+                        provider_run.status = "rate_limited"
                     logger.error("Provider %s failed: %s", source.name, error)
                     search_run.errors += 1
                     session.commit()
