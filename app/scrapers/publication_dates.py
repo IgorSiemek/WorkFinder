@@ -2,9 +2,9 @@ from __future__ import annotations
 
 import json
 import re
-from contextlib import nullcontext
 from dataclasses import dataclass
 from datetime import UTC, date, datetime, timedelta
+from functools import partial
 from html.parser import HTMLParser
 from urllib.parse import unquote, urljoin, urlsplit
 
@@ -12,7 +12,7 @@ import httpx
 
 from app.config import settings
 from app.scrapers.common import parse_date, plain_text
-from app.scrapers.workday_limits import workday_access
+from app.scrapers.workday_http import WorkdayHttp
 
 
 @dataclass(frozen=True)
@@ -208,34 +208,34 @@ def lookup_publication_date(url: str, title: str) -> tuple[PublicationDate, dict
             path = f"/wday/cxs/{tenant}/{parts[0]}/job/" + "/".join(parts[2:])
             url = f"https://{parsed.hostname}{path}"
     try:
-        for _ in range(5):
-            is_workday = (urlsplit(url).hostname or "").endswith(".myworkdayjobs.com")
-            with workday_access(url) if is_workday else nullcontext():
-                response = httpx.get(
+        with WorkdayHttp() as workday:
+            for _ in range(5):
+                is_workday = (urlsplit(url).hostname or "").endswith(".myworkdayjobs.com")
+                get = partial(workday.request, "GET") if is_workday else httpx.get
+                response = get(
                     url,
                     timeout=min(settings.request_timeout_seconds, 5),
                     headers={"User-Agent": settings.user_agent},
                     follow_redirects=False,
                 )
-                if not response.is_redirect:
-                    response.raise_for_status()
-            if response.is_redirect:
-                redirected = urljoin(url, response.headers.get("location", ""))
-                if not supported_url(redirected):
-                    raise ValueError("Unrecognized careers redirect")
-                url = redirected
-                continue
-            if "/wday/cxs/" in urlsplit(url).path:
-                data = response.json().get("jobPostingInfo", {})
-                posted = source_date(data.get("startDate"))
-                result = PublicationDate(
-                    posted, "Workday startDate", str(data.get("startDate") or "")
-                )
-                if posted is None:
-                    result = PublicationDate()
-            else:
-                result = extract_publication_date(response.text[:2_000_000], url, title)
-            return result, date_evidence(result, url)
+                if response.is_redirect:
+                    redirected = urljoin(url, response.headers.get("location", ""))
+                    if not supported_url(redirected):
+                        raise ValueError("Unrecognized careers redirect")
+                    url = redirected
+                    continue
+                response.raise_for_status()
+                if "/wday/cxs/" in urlsplit(url).path:
+                    data = response.json().get("jobPostingInfo", {})
+                    posted = source_date(data.get("startDate"))
+                    result = PublicationDate(
+                        posted, "Workday startDate", str(data.get("startDate") or "")
+                    )
+                    if posted is None:
+                        result = PublicationDate()
+                else:
+                    result = extract_publication_date(response.text[:2_000_000], url, title)
+                return result, date_evidence(result, url)
         raise ValueError("Too many redirects")
     except (httpx.HTTPError, ValueError, TypeError, AttributeError):
         info = date_evidence(PublicationDate(), url)

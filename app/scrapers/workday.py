@@ -9,7 +9,8 @@ from app.config import settings
 from app.scrapers.base import JobPosting, JobSource, SearchCriteria
 from app.scrapers.common import is_internship_role, plain_text, relevant_to_krakow
 from app.scrapers.publication_dates import PublicationDate, date_evidence, source_date
-from app.scrapers.workday_limits import WorkdayRateLimited, workday_access
+from app.scrapers.workday_http import WorkdayHttp
+from app.scrapers.workday_limits import WorkdayRateLimited
 
 logger = logging.getLogger(__name__)
 
@@ -31,34 +32,39 @@ class WorkdaySource(JobSource):
         self.config = config
         self.name = config.name
         self.description = f"Official {config.company} public Workday careers feed."
+        self.http: WorkdayHttp | None = None
 
     @property
     def api_url(self) -> str:
         return f"https://{self.config.host}/wday/cxs/{self.config.tenant}/{self.config.site}/jobs"
 
     def search_page(self, query: str, offset: int) -> dict:
-        with workday_access(self.api_url):
-            response = httpx.post(
-                self.api_url,
-                json={"appliedFacets": {}, "limit": 20, "offset": offset, "searchText": query},
-                timeout=settings.request_timeout_seconds,
-                headers={"User-Agent": settings.user_agent},
-                follow_redirects=True,
-            )
-            response.raise_for_status()
+        response = self.request(
+            "POST",
+            self.api_url,
+            json={"appliedFacets": {}, "limit": 20, "offset": offset, "searchText": query},
+            timeout=settings.request_timeout_seconds,
+            headers={"User-Agent": settings.user_agent},
+            follow_redirects=True,
+        )
         return response.json()
+
+    def request(self, method: str, url: str, **kwargs) -> httpx.Response:  # noqa: ANN003
+        if self.http is not None:
+            return self.http.request(method, url, **kwargs)
+        with WorkdayHttp() as client:
+            return client.request(method, url, **kwargs)
 
     def posting_details(self, path: str) -> dict:
         url = self.api_url.removesuffix("/jobs") + path
         try:
-            with workday_access(url):
-                response = httpx.get(
-                    url,
-                    timeout=min(settings.request_timeout_seconds, 5),
-                    headers={"User-Agent": settings.user_agent},
-                    follow_redirects=True,
-                )
-                response.raise_for_status()
+            response = self.request(
+                "GET",
+                url,
+                timeout=min(settings.request_timeout_seconds, 5),
+                headers={"User-Agent": settings.user_agent},
+                follow_redirects=True,
+            )
             payload = response.json()
             details = payload.get("jobPostingInfo") if isinstance(payload, dict) else None
             return details if isinstance(details, dict) else {}
@@ -70,6 +76,14 @@ class WorkdaySource(JobSource):
             return {}
 
     def search_jobs(self, criteria: SearchCriteria) -> list[JobPosting]:
+        with WorkdayHttp() as client:
+            self.http = client
+            try:
+                return self._search_jobs(criteria)
+            finally:
+                self.http = None
+
+    def _search_jobs(self, criteria: SearchCriteria) -> list[JobPosting]:
         self.can_confirm_absence = False
         self.scan_complete = False
         self.last_search_note = ""
