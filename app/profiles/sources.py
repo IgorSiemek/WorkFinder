@@ -15,7 +15,7 @@ from app.scrapers.workday_limits import WorkdayRateLimited
 class PersonalWorkdaySource(WorkdaySource):
     """A separate search path for configurable profiles; legacy searches stay unchanged."""
 
-    def search_jobs(self, criteria: SearchCriteria) -> list[JobPosting]:
+    def _search_jobs(self, criteria: SearchCriteria) -> list[JobPosting]:
         scope = active_scope()
         queries = [
             self.config.search_text
