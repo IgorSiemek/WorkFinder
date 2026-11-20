@@ -218,6 +218,48 @@ def test_reminders_use_warsaw_day_and_skip_closed_processes(session, controller,
     assert message.status == "cancelled"
 
 
+def test_reminders_off_cancels_queued_reminders_only_for_that_chat(session, controller, job):
+    now = datetime(2026, 11, 11, 9, 30)
+    member = controller.for_user(43)
+    controller.set_state(session, "members", [43])
+    for recipient in (controller, member):
+        recipient.set_state(session, "started_at", now.isoformat())
+    session.add(Application(job=job, status="Applied", next_action_date=now.date()))
+    new_job = Job(
+        title="Data Intern",
+        company="Example",
+        source="Test",
+        original_url="https://example.com/new-intern",
+        canonical_url="https://example.com/new-intern",
+        job_hash="new-intern",
+        date_discovered=now,
+        match_score=80,
+    )
+    session.add(new_job)
+    for recipient in (controller, member):
+        queue_notifications(session, recipient, now)
+
+    controller.handle(session, incoming(1, "/reminders off"))
+    tomorrow = now + timedelta(days=1)
+    for recipient in (controller, member):
+        queue_notifications(session, recipient, tomorrow)
+
+    messages = {row.dedup_key: row.status for row in session.scalars(select(BotMessage))}
+    reminder = f"reminder:{job.id}:{now.date()}"
+    assert messages[f"{controller.scope}:{reminder}:{now.date()}"] == "cancelled"
+    assert f"{controller.scope}:{reminder}:{tomorrow.date()}" not in messages
+    assert messages[f"{member.scope}:{reminder}:{tomorrow.date()}"] == "pending"
+    assert messages[f"{controller.scope}:job:{new_job.id}"] == "pending"
+
+    controller.handle(session, incoming(2, "/reminders on"))
+    queue_notifications(session, controller, tomorrow)
+    assert session.scalar(
+        select(BotMessage).where(
+            BotMessage.dedup_key == f"{controller.scope}:{reminder}:{tomorrow.date()}"
+        )
+    ).status == "pending"
+
+
 @pytest.mark.parametrize(
     ("error", "status"),
     [

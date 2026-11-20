@@ -32,6 +32,7 @@ HELP = """<b>WorkFinder</b>
 /ignored — pominięte oferty
 /find tekst — wyszukaj w tytułach i firmach
 /followups — działania na dziś i zaległe
+/reminders on lub off — automatyczne przypomnienia o aplikacjach
 /job ID — szczegóły oferty
 /note ID treść — ustaw notatkę (znak - usuwa)
 /date ID RRRR-MM-DD — ustaw przypomnienie (znak - usuwa)
@@ -113,6 +114,18 @@ class BotController:
             administrator_id=self.administrator_id,
             bot_username=self.bot_username,
         )
+
+    def set_reminders(self, session: Session, enabled: bool) -> None:
+        self.set_state(session, "reminders_enabled", enabled)
+        if not enabled:
+            session.execute(
+                sql_update(BotMessage)
+                .where(
+                    BotMessage.dedup_key.startswith(f"{self.scope}:reminder:"),
+                    BotMessage.status.in_(("pending", "failed", "uncertain")),
+                )
+                .values(status="cancelled")
+            )
 
     def allowed_user_ids(self, session: Session) -> list[int]:
         members = self.state(session, "members", [], scope=self.admin_scope)
@@ -410,6 +423,13 @@ class BotController:
                     else "Powiadomienia włączone."
                 }
             ]
+        if command == "reminders":
+            if argument:
+                if argument not in {"on", "off"}:
+                    raise ValueError("Użyj /reminders on albo /reminders off.")
+                self.set_reminders(session, argument == "on")
+            status = "włączone" if self.state(session, "reminders_enabled", True) else "wyłączone"
+            return [{"text": f"Przypomnienia o aplikacjach są {status}."}]
         if command in {"note", "date", "cv"}:
             identifier, _, value = argument.partition(" ")
             if not value:
@@ -467,6 +487,11 @@ class BotController:
             from app.scrapers.registry import enabled_sources
 
             config = self.config
+            reminders = (
+                config["reminder_time"]
+                if self.state(session, "reminders_enabled", True)
+                else "wyłączone"
+            )
             sources = ", ".join(config["sources"]) or "wszystkie dostępne"
             available = "\n".join(source.name for source in enabled_sources())
             return [
@@ -474,7 +499,7 @@ class BotController:
                     "text": escape(
                         f"Strefa · {config['timezone']}\nWyszukiwanie · "
                         f"{', '.join(config['search_times']) or 'ręczne'}\n"
-                        f"Przypomnienia · {config['reminder_time']}\n"
+                        f"Przypomnienia · {reminders}\n"
                         f"Próg powiadomień · {config['minimum_score']}/100\nŹródła · {sources}\n\n"
                         f"Dostępne nazwy źródeł\n{available}\n\n"
                         "Edytuj plik JSON i użyj /reload."

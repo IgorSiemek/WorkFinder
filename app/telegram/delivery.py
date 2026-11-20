@@ -45,7 +45,10 @@ def queue_notifications(session: Session, controller: BotController, now: dateti
     for job in jobs:
         controller.queue(session, f"job:{job.id}", job_card(job))
     local = now.replace(tzinfo=UTC).astimezone(ZoneInfo(controller.config["timezone"]))
-    if local.strftime("%H:%M") >= controller.config["reminder_time"]:
+    if (
+        controller.state(session, "reminders_enabled", True)
+        and local.strftime("%H:%M") >= controller.config["reminder_time"]
+    ):
         for application in follow_ups(session, local.date()):
             controller.queue(
                 session,
@@ -131,7 +134,8 @@ def prepare_message(session: Session, controller: BotController) -> BotMessage |
                 now.replace(tzinfo=UTC).astimezone(ZoneInfo(controller.config["timezone"])).date()
             )
             eligible = bool(
-                app
+                controller.state(session, "reminders_enabled", True)
+                and app
                 and app.status not in CLOSED_STATUSES
                 and (str(app.next_action_date) == key[2] and str(today) == key[3])
             )
@@ -155,8 +159,11 @@ async def deliver_one(client, sessions, controller: BotController) -> bool:  # n
         if message is None:
             return False
         identifier, method, payload = message.id, message.method, message.payload
+        reminder = message.dedup_key.startswith(f"{controller.scope}:reminder:")
     with sessions() as session:
-        if controller.owner_id not in controller.allowed_user_ids(session):
+        if controller.owner_id not in controller.allowed_user_ids(session) or (
+            reminder and not controller.state(session, "reminders_enabled", True)
+        ):
             session.get(BotMessage, identifier).status = "cancelled"
             session.commit()
             return False
