@@ -68,6 +68,7 @@ Pliki CV i sesje logowania są przechowywane w `data/applications/`, a profil i 
 | `/note 12 treść`, `/cv 12 nazwa` | Notatka lub wersja CV, znak `-` usuwa wartość |
 | `/date 12 2026-12-01` | Termin następnego działania, znak `-` usuwa termin |
 | `/followups`, `/followups 2` | Działania na dziś i zaległe |
+| `/reminders on`, `/reminders off` | Włączenie lub wyłączenie przypomnień o aplikacjach w danym czacie |
 | `/search`, `/health` | Wyszukiwanie i stan źródeł oraz kolejki wiadomości |
 | `/pause`, `/resume` | Wstrzymanie i wznowienie powiadomień |
 | `/setup`, `/applicant`, `/uploadcv`, `/form` | Profil, CV w PDF i formularz aplikacyjny |
