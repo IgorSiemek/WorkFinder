@@ -36,6 +36,11 @@ WATCHLIST = [
     "Shell",
     "ABB",
     "Aon",
+    "Verisk",
+    "Zurich",
+    "Kingfisher",
+    "International Paper",
+    "Jacobs",
     "ING",
     "Santander",
     "PKO BP",
@@ -242,7 +247,14 @@ def seed_defaults(session: Session) -> None:
             skills=["Excel", "Data analysis", "Statistics", "English", "Polish", "Reporting"],
             technologies=["SQL", "Python"],
             languages=["Polish", "English"],
-            preferred_jobs=["Finance analyst", "Data analyst", "Business analyst", "Research"],
+            preferred_jobs=[
+                "Finance analyst",
+                "Data analyst",
+                "Business analyst",
+                "Research",
+                "Risk analyst",
+                "BI analyst",
+            ],
             preferred_industries=["Banking", "Consulting", "Analytics", "Economics"],
             preferred_locations=["Kraków"],
             remote_preference="Hybrid",
@@ -263,8 +275,31 @@ def seed_defaults(session: Session) -> None:
             session.add(CvVersion(name=name))
     if not session.scalar(select(SavedSearch).limit(1)):
         for name, keywords in [
-            ("Finance internships", ["finance", "intern"]),
-            ("Data analyst internships", ["data analyst", "intern"]),
+            (
+                "Finance internships",
+                ["finance", "financial analyst", "analityk finansowy", "intern"],
+            ),
+            (
+                "Data analyst internships",
+                ["data analyst", "data analytics", "analityk danych", "intern"],
+            ),
+            (
+                "Risk analyst internships",
+                [
+                    "risk analyst",
+                    "risk control",
+                    "credit risk",
+                    "market risk",
+                    "model risk",
+                    "operational risk",
+                    "analityk ryzyka",
+                    "intern",
+                ],
+            ),
+            (
+                "BI analyst internships",
+                ["business intelligence", "bi analyst", "power bi", "powerbi", "intern"],
+            ),
             ("Business analyst internships", ["business analyst", "intern", "trainee"]),
             ("Economic research", ["economic", "research"]),
             ("Controlling / FP&A", ["controlling", "fp&a"]),

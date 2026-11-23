@@ -149,8 +149,9 @@ def stone_card(identifier, city="Krakow", title="Finance Intern"):
 
 
 @pytest.mark.parametrize("missing_city", [False, True])
+@pytest.mark.parametrize("company", ["StoneX", "Kingfisher"])
 def test_stonex_scans_later_pages_and_uses_offer_location_not_search_page(
-    monkeypatch, missing_city
+    monkeypatch, missing_city, company
 ):
     seen = []
 
@@ -169,7 +170,7 @@ def test_stonex_scans_later_pages_and_uses_offer_location_not_search_page(
         )
 
     mock_client(monkeypatch, handler)
-    source = StoneXSource(CareerPageConfig("StoneX", "StoneX", "https://example.com/jobs/search"))
+    source = StoneXSource(CareerPageConfig(company, company, "https://example.com/jobs/search"))
     jobs = source.search_jobs(SearchCriteria())
     assert [job.source_job_id for job in jobs] == ["2"]
     assert jobs[0].description == "Excel and financial reporting."
