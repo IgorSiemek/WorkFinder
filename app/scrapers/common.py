@@ -64,6 +64,8 @@ def is_talent_pool(title: str, description: str) -> bool:
         for phrase in (
             "this exact role may not be open",
             "this posting is to advertise potential job opportunities",
+            "this role is part of our talent pipeline",
+            "click apply to express your interest and be considered for future opportunities",
         )
     )
 

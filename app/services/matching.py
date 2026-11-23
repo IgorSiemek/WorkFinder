@@ -1,10 +1,13 @@
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 
 from app.models import CandidateProfile, Job
 from app.profiles.scope import active_scope, location_matches
 from app.scrapers.common import is_internship_role, is_senior_role
+
+EXCEL_PATTERN = re.compile(r"\bexcel\b", re.IGNORECASE)
 
 SKILL_ALIASES: dict[str, tuple[str, ...]] = {
     "Excel": ("excel", "spreadsheets"),
@@ -71,11 +74,14 @@ class MatchResult:
 
 def extract_skills(text: str) -> list[str]:
     content = text.casefold()
-    return [
+    skills = [
         name
         for name, aliases in SKILL_ALIASES.items()
         if any(alias in content for alias in aliases)
     ]
+    if "Excel" in skills and not (EXCEL_PATTERN.search(content) or "spreadsheets" in content):
+        skills.remove("Excel")
+    return skills
 
 
 def classify_job(text: str) -> list[str]:
@@ -143,12 +149,13 @@ def score_job(job: Job, profile: CandidateProfile | None = None) -> MatchResult:
         ),
         (("reporting", "kpi", "forecast", "budget", "variance"), "Reporting and planning", 8),
         (("sql",), "SQL", 7),
-        (("excel",), "Excel", 7),
         (("python", "power bi", "powerbi"), "Analytics technology", 5),
     ]
     for terms, label, points in positive:
         if any(term in text for term in terms):
             add(label, points)
+    if EXCEL_PATTERN.search(text):
+        add("Excel", 7)
     if is_senior_role(job.title) or is_senior_role(job.seniority or ""):
         add("Senior role", -28)
     negative = [

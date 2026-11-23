@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 
 import httpx
@@ -7,7 +8,7 @@ import pytest
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.models import Job, ProviderRun, SearchObservation, SearchRun
+from app.models import Application, Job, ProviderRun, SearchObservation, SearchRun
 from app.scrapers.base import JobPosting
 from app.scrapers.publication_dates import lookup_publication_date
 from app.scrapers.workday import WorkdayConfig, WorkdaySource
@@ -17,7 +18,18 @@ from app.services.bot_config import validate_config
 from app.telegram.controller import BotController
 
 
-def test_workday_talent_pools_are_audited_while_real_internships_are_imported(session, monkeypatch):
+@pytest.mark.parametrize(
+    "future_description",
+    [
+        "This exact role may not be open today.",
+        "This role is part of our talent pipeline, which means it is not currently open.",
+        "A future opportunity. Click Apply to express your interest and be considered "
+        "for future opportunities that match your experience and aspirations.",
+    ],
+)
+def test_workday_talent_pools_are_audited_while_real_internships_are_imported(
+    session, monkeypatch, future_description
+):
     source = WorkdaySource(WorkdayConfig("ABB Careers", "ABB", "example.com", "abb", "External"))
     records = [
         {"title": title, "locationsText": "Krakow", "externalPath": f"/job/Krakow/Intern_R{i}"}
@@ -34,7 +46,7 @@ def test_workday_talent_pools_are_audited_while_real_internships_are_imported(se
         "posting_details",
         lambda path: {
             "startDate": "2026-11-01",
-            "jobDescription": "This exact role may not be open today."
+            "jobDescription": future_description
             if path.endswith("R2")
             else "Excel SQL reporting. Develop skills for future opportunities.",
         },
@@ -45,6 +57,79 @@ def test_workday_talent_pools_are_audited_while_real_internships_are_imported(se
     assert session.scalar(select(Job)).title == "BI Analyst Intern"
     observations = session.scalars(select(SearchObservation)).all()
     assert sum(row.outcome == "excluded_talent_pool" for row in observations) == 2
+
+
+@pytest.mark.parametrize("legacy_source", ["ABB Careers", "Aggregated Careers"])
+@pytest.mark.parametrize(
+    "future_url", ["https://example.com/job/future-finance-R1", "javascript:invalid"]
+)
+def test_confirmed_pool_retires_legacy_import_and_real_vacancy_can_reopen_it(
+    session, monkeypatch, legacy_source, future_url
+):
+    future = JobPosting(
+        source="ABB Careers",
+        source_job_id="R1",
+        title="Finance Intern Talent Pool",
+        company="ABB",
+        location="Krakow",
+        url="https://example.com/job/finance-R1",
+        description="This role is part of our talent pipeline. Apply for future opportunities.",
+    )
+    legacy, _ = search.import_posting(session, replace(future, source=legacy_source))
+    linked, _ = search.import_posting(session, future)
+    assert linked.id == legacy.id
+    identifier = legacy.id
+    legacy.notes = "Existing note"
+    legacy.application = Application(status="Saved", notes="Existing application")
+    other, _ = search.import_posting(
+        session,
+        JobPosting(
+            source="Other Careers",
+            source_job_id="R1",
+            title="BI Intern",
+            company="Other",
+            location="Krakow",
+            url="https://other.example/job/R1",
+            description="Excel SQL.",
+        ),
+    )
+    session.commit()
+    future.raw_payload["talent_pool"] = True
+    future.url = future_url
+    postings = [future]
+
+    class Provider:
+        name = "ABB Careers"
+        scan_complete = True
+
+        def search_jobs(self, criteria):
+            return postings
+
+    monkeypatch.setattr(search, "enabled_sources", lambda: [Provider()])
+    monkeypatch.setattr(search, "refresh_posting_dates", lambda *args: None)
+    run = search.run_search(session)
+    assert not session.get(Job, identifier).is_active
+    assert other.is_active
+    observation = session.scalar(
+        select(SearchObservation).where(SearchObservation.search_run_id == run.id)
+    )
+    assert observation.outcome == "excluded_talent_pool" and observation.job_id == identifier
+    postings[0] = JobPosting(
+        source="ABB Careers",
+        source_job_id="R1",
+        title="Finance Intern",
+        company="ABB",
+        location="Krakow",
+        url="https://example.com/job/finance-R1",
+        description="Excel SQL.",
+    )
+    search.run_search(session)
+    restored = session.get(Job, identifier)
+    assert restored.is_active and restored.description == "Excel SQL."
+    assert restored.title == "Finance Intern"
+    assert restored.original_url == "https://example.com/job/finance-R1"
+    assert restored.notes == "Existing note"
+    assert restored.application.notes == "Existing application"
 
 
 def test_search_preserves_decisions_and_isolates_bad_offer(
@@ -122,7 +207,8 @@ def test_empty_monitor_is_recorded_as_unverified(
     assert "cannot confirm" in provider.error_message
 
 
-def test_talent_pools_are_audited_but_not_imported(session, monkeypatch) -> None:  # noqa: ANN001
+@pytest.mark.parametrize("url", ["https://example.com/job/1", "javascript:invalid"])
+def test_talent_pools_are_audited_but_not_imported(session, monkeypatch, url) -> None:  # noqa: ANN001
     class Provider:
         name = "Cisco Careers"
         scan_complete = True
@@ -135,7 +221,7 @@ def test_talent_pools_are_audited_but_not_imported(session, monkeypatch) -> None
                     title="Finance Intern",
                     company="Cisco",
                     location="Krakow",
-                    url="https://example.com/job/1",
+                    url=url,
                     raw_payload={"talent_pool": True},
                 )
             ]

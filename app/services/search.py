@@ -21,11 +21,11 @@ from app.models import (
 )
 from app.profiles.scope import active_scope, job_filter, location_matches, role_matches
 from app.scrapers.base import JobPosting, SearchCriteria
-from app.scrapers.common import INTERNSHIP_KEYWORDS
+from app.scrapers.common import INTERNSHIP_KEYWORDS, is_talent_pool
 from app.scrapers.registry import enabled_sources
 from app.scrapers.workday_limits import WorkdayRateLimited
 from app.services.backups import automatic_backup
-from app.services.deduplication import find_duplicate
+from app.services.deduplication import find_duplicate, find_exact_duplicate
 from app.services.ignoring import apply_ignore_rules
 from app.services.matching import score_job
 from app.services.normalization import canonicalize_url, job_hash
@@ -136,8 +136,12 @@ def import_posting(
 ) -> tuple[Job, str]:
     duplicate = find_duplicate(session, posting)
     if duplicate:
+        was_talent_pool = is_talent_pool(duplicate.title, duplicate.description)
         duplicate.last_seen = utcnow()
         duplicate.is_active = True
+        if was_talent_pool:
+            duplicate.title = posting.title[:300]
+            duplicate.original_url = posting.url
         if posting.date_posted is not None:
             duplicate.date_posted = (
                 min(duplicate.date_posted, posting.date_posted)
@@ -146,7 +150,7 @@ def import_posting(
             )
         if evidence := posting.raw_payload.get("_publication_check"):
             save_date_evidence(duplicate, evidence)
-        if len(posting.description) > len(duplicate.description):
+        if len(posting.description) > len(duplicate.description) or was_talent_pool:
             duplicate.description = posting.description
         _add_occurrence(session, duplicate, posting)
         result = score_job(duplicate, profile)
@@ -251,6 +255,10 @@ def run_search(session: Session, *, source_names: list[str] | None = None) -> Se
                         observation.detail = (
                             "Employer advertises future opportunities, not a confirmed vacancy"
                         )
+                        existing = find_exact_duplicate(session, posting)
+                        if existing is not None:
+                            existing.is_active = False
+                            observation.job_id = existing.id
                         continue
                     if not role_matches(posting.title, posting.employment_type, posting.seniority):
                         continue
