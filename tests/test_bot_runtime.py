@@ -8,7 +8,7 @@ from sqlalchemy.orm import sessionmaker
 
 from app import cli
 from app.database import Base
-from app.models import BotState, Job, utcnow
+from app.models import Application, BotMessage, BotState, Job, utcnow
 from app.services.bot_config import validate_config
 from app.telegram import runtime
 from app.telegram.controller import BotController
@@ -126,6 +126,41 @@ def test_due_search_is_persistent_and_repeated_requests_coalesce(session, monkey
     assert not service.tick()
     session.expire_all()
     assert not controller.state(session, "search_requested")
+
+
+def test_search_summary_counts_imports_and_the_filtered_new_view(session, monkeypatch):
+    sessions = sessionmaker(bind=session.get_bind(), expire_on_commit=False)
+    monkeypatch.setattr(runtime, "SessionLocal", sessions)
+    controller = BotController(42, validate_config({"search_times": [], "minimum_score": 60}))
+    controller.set_state(session, "started_at", utcnow().isoformat())
+    jobs = [
+        Job(
+            title="Finance Intern",
+            company="Example",
+            source="Test",
+            match_score=90,
+            original_url=f"https://example.com/counts/{index}",
+            canonical_url=f"https://example.com/counts/{index}",
+            job_hash=f"counts-{index}",
+        )
+        for index in range(7)
+    ]
+    jobs[1].match_score = 50
+    jobs[2].ignored = True
+    jobs[3].application = Application(status="Applied")
+    jobs[4].is_active = False
+    jobs[5].date_discovered = utcnow() - timedelta(days=8)
+    jobs[6].title = "Senior Finance Analyst"
+    session.add_all(jobs)
+    session.commit()
+    result = SimpleNamespace(id=51, new_jobs=7, jobs_found=7, errors=0, provider_runs=[])
+    monkeypatch.setattr(runtime, "run_search", lambda *args, **kwargs: result)
+    runtime.BotRuntime(None, controller).search()
+    session.expire_all()
+    text = session.scalar(select(BotMessage)).payload["text"]
+    assert "Nowe zapisane w bazie · 7" in text
+    assert "Oferty w /new · 1 (7 dni, od 60 pkt)" in text
+    assert controller.listing(session, "new", 1)[0]["text"].splitlines()[0].endswith("· 1")
 
 
 def test_backup_cli_works_when_json_is_invalid(session, monkeypatch, tmp_path, capsys):

@@ -24,6 +24,7 @@ from app.services.bot_config import (
     load_config,
     next_search,
 )
+from app.services.jobs import list_jobs
 from app.services.progress import retry_excel_sync
 from app.services.publication_dates import refresh_posting_dates
 from app.services.search import run_search
@@ -108,6 +109,9 @@ class BotRuntime:
         with SessionLocal() as session:
             try:
                 result = run_search(session, source_names=controller.config["sources"])
+                _, visible_new = list_jobs(
+                    session, "new", minimum_score=controller.config["minimum_score"]
+                )
                 rate_limited = sum(
                     provider.status == "rate_limited" for provider in result.provider_runs
                 )
@@ -121,9 +125,12 @@ class BotRuntime:
                     f"search:{result.id}",
                     (
                         "<b>Wyszukiwanie zakończone</b>\n"
-                        f"Nowych ofert · {result.new_jobs}\nZnalezionych · {result.jobs_found}\n"
+                        f"Nowe zapisane w bazie · {result.new_jobs}\n"
+                        f"Oferty w /new · {visible_new} "
+                        f"(7 dni, od {controller.config['minimum_score']} pkt)\n"
+                        f"Znalezione w skanie · {result.jobs_found}\n"
                         f"Błędów · {result.errors}\n{limit_note}"
-                        "Przeglądaj pod /new. Stan źródeł pod /health."
+                        "Stan źródeł sprawdzisz pod /health."
                     ),
                 )
             except Exception:

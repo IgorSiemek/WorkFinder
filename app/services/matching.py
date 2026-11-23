@@ -4,7 +4,7 @@ from dataclasses import dataclass
 
 from app.models import CandidateProfile, Job
 from app.profiles.scope import active_scope, location_matches
-from app.scrapers.common import is_internship_role
+from app.scrapers.common import is_internship_role, is_senior_role
 
 SKILL_ALIASES: dict[str, tuple[str, ...]] = {
     "Excel": ("excel", "spreadsheets"),
@@ -149,8 +149,9 @@ def score_job(job: Job, profile: CandidateProfile | None = None) -> MatchResult:
     for terms, label, points in positive:
         if any(term in text for term in terms):
             add(label, points)
+    if is_senior_role(job.title) or is_senior_role(job.seniority or ""):
+        add("Senior role", -28)
     negative = [
-        (("senior", "lead ", "manager", "director", "head of"), "Senior role", -28),
         (("5+ years", "five years", "6+ years"), "Extensive experience required", -18),
         (("sales representative", "call center", "customer support"), "Sales/support focus", -22),
         (("software engineer", "devops", "site reliability"), "Unrelated engineering role", -25),
