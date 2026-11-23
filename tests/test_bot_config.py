@@ -4,6 +4,7 @@ import pytest
 from sqlalchemy import select
 
 from app.models import CandidateProfile, CompanyPreference, IgnoreRule, SavedSearch
+from app.scrapers.base import JobPosting
 from app.services.bot_config import (
     apply_config,
     export_config,
@@ -11,8 +12,12 @@ from app.services.bot_config import (
     next_search,
     validate_config,
 )
+from app.services.jobs import job_action, list_jobs
+from app.services.matching import MANUAL_SCORE_FLOOR_KEY
+from app.services.search import import_posting
 from app.services.seed import seed_defaults
 from app.telegram.runtime import process_lock
+from app.telegram.views import job_card
 
 
 @pytest.mark.parametrize(
@@ -77,6 +82,33 @@ def test_validation_precedes_any_database_changes(session):
     with pytest.raises(ValueError):
         apply_config(session, {"profile": {"name": "changed"}, "minimum_score": -1})
     assert profile.name == previous
+
+
+def test_saved_future_opportunity_keeps_manual_rating_after_config_reload(session):
+    posting = JobPosting(
+        source="ABB Careers",
+        source_job_id="R1",
+        url="https://example.com/jobs/R1",
+        title="Master Data Internship",
+        company="ABB",
+        location="Krakow",
+        description="This role is part of our talent pipeline.",
+        raw_payload={MANUAL_SCORE_FLOOR_KEY: 100},
+    )
+    job, _ = import_posting(session, posting)
+    assert job.match_score == 48
+    job.raw_payload = {**job.raw_payload, MANUAL_SCORE_FLOOR_KEY: 85}
+    job.is_active = False
+    job_action(session, job.id, "save")
+    session.commit()
+
+    apply_config(session, {})
+    session.commit()
+
+    assert job.match_score == 85
+    assert list_jobs(session, "saved")[0] == [job]
+    assert list_jobs(session, "new", minimum_score=60)[0] == []
+    assert "Nabór przyszły" in job_card(job)["text"]
 
 
 @pytest.mark.parametrize(

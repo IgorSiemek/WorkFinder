@@ -8,6 +8,7 @@ from app.profiles.scope import active_scope, location_matches
 from app.scrapers.common import is_internship_role, is_senior_role
 
 EXCEL_PATTERN = re.compile(r"\bexcel\b", re.IGNORECASE)
+MANUAL_SCORE_FLOOR_KEY = "_manual_score_floor"
 
 SKILL_ALIASES: dict[str, tuple[str, ...]] = {
     "Excel": ("excel", "spreadsheets"),
@@ -168,6 +169,10 @@ def score_job(job: Job, profile: CandidateProfile | None = None) -> MatchResult:
             add(label, points)
     if "krak" in job.location.casefold() or "cracow" in job.location.casefold():
         add("Kraków location", 8)
+
+    manual_floor = (job.raw_payload or {}).get(MANUAL_SCORE_FLOOR_KEY)
+    if type(manual_floor) is int and 0 <= manual_floor <= 100 and manual_floor > score:
+        add("Ręczna ocena dopasowania", manual_floor - score)
 
     skills = extract_skills(text)
     profile_skills = {

@@ -27,7 +27,7 @@ from app.scrapers.workday_limits import WorkdayRateLimited
 from app.services.backups import automatic_backup
 from app.services.deduplication import find_duplicate, find_exact_duplicate
 from app.services.ignoring import apply_ignore_rules
-from app.services.matching import score_job
+from app.services.matching import MANUAL_SCORE_FLOOR_KEY, score_job
 from app.services.normalization import canonicalize_url, job_hash
 from app.services.publication_dates import refresh_posting_dates, save_date_evidence
 
@@ -73,6 +73,8 @@ DEFAULT_KEYWORDS = [
 
 def _new_job(posting: JobPosting, profile: CandidateProfile | None) -> Job:
     canonical_url = canonicalize_url(posting.url)
+    payload = dict(posting.raw_payload)
+    payload.pop(MANUAL_SCORE_FLOOR_KEY, None)
     job = Job(
         source=posting.source,
         source_job_id=posting.source_job_id,
@@ -93,7 +95,7 @@ def _new_job(posting: JobPosting, profile: CandidateProfile | None) -> Job:
         responsibilities=posting.responsibilities,
         date_posted=posting.date_posted,
         job_hash=job_hash(posting.company, posting.title, posting.location, posting.description),
-        raw_payload=posting.raw_payload,
+        raw_payload=payload,
     )
     result = score_job(job, profile)
     job.match_score = result.score
