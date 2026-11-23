@@ -7,7 +7,7 @@ import pytest
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.models import ProviderRun, SearchObservation, SearchRun
+from app.models import Job, ProviderRun, SearchObservation, SearchRun
 from app.scrapers.base import JobPosting
 from app.scrapers.publication_dates import lookup_publication_date
 from app.scrapers.workday import WorkdayConfig, WorkdaySource
@@ -15,6 +15,36 @@ from app.scrapers.workday_limits import WorkdayRateLimited
 from app.services import search
 from app.services.bot_config import validate_config
 from app.telegram.controller import BotController
+
+
+def test_workday_talent_pools_are_audited_while_real_internships_are_imported(session, monkeypatch):
+    source = WorkdaySource(WorkdayConfig("ABB Careers", "ABB", "example.com", "abb", "External"))
+    records = [
+        {"title": title, "locationsText": "Krakow", "externalPath": f"/job/Krakow/Intern_R{i}"}
+        for i, title in enumerate(
+            ["Student Internship Talent Pool", "Risk Analyst Intern", "BI Analyst Intern"],
+            start=1,
+        )
+    ]
+    monkeypatch.setattr(
+        source, "search_page", lambda query, offset: {"total": 3, "jobPostings": records}
+    )
+    monkeypatch.setattr(
+        source,
+        "posting_details",
+        lambda path: {
+            "startDate": "2026-11-01",
+            "jobDescription": "This exact role may not be open today."
+            if path.endswith("R2")
+            else "Excel SQL reporting. Develop skills for future opportunities.",
+        },
+    )
+    monkeypatch.setattr(search, "enabled_sources", lambda: [source])
+    result = search.run_search(session)
+    assert result.new_jobs == result.jobs_found == 1
+    assert session.scalar(select(Job)).title == "BI Analyst Intern"
+    observations = session.scalars(select(SearchObservation)).all()
+    assert sum(row.outcome == "excluded_talent_pool" for row in observations) == 2
 
 
 def test_search_preserves_decisions_and_isolates_bad_offer(
