@@ -170,6 +170,9 @@ def test_all_requested_krakow_companies_have_enabled_sources() -> None:
         "Zurich",
         "Kingfisher",
         "International Paper",
+        "Kärcher",
+        "GGS IT Consulting",
+        "TAURON Dystrybucja",
     }
     companies = {
         source.config.company
