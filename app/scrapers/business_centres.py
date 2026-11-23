@@ -13,7 +13,12 @@ from app.scrapers.base import JobPosting, SearchCriteria
 from app.scrapers.career_pages import ANCHOR_PATTERN, CareerPageSource
 from app.scrapers.common import is_internship_role, plain_text, relevant_to_krakow
 from app.scrapers.employer_feeds import matches
-from app.scrapers.publication_dates import PublicationDate, date_evidence, source_date
+from app.scrapers.publication_dates import (
+    PublicationDate,
+    date_evidence,
+    extract_publication_date,
+    source_date,
+)
 
 
 class HaviDescription(HTMLParser):
@@ -127,6 +132,9 @@ class SAPCareersSource(CareerPageSource):
                             evidence = PublicationDate(
                                 posted, f"{self.config.company} job-date", label
                             )
+                    if not posted:
+                        evidence = extract_publication_date(detail.text, url, title)
+                        posted = evidence.value
                     posting = JobPosting(
                         source=self.name,
                         source_job_id=url.rstrip("/").rsplit("/", 1)[-1],

@@ -8,6 +8,7 @@ from app.scrapers.business_centres import JibeCareersSource, OracleCareersSource
 from app.scrapers.career_pages import CareerPageConfig, CareerPageSource
 from app.scrapers.early_careers import ICIMSSource, LundbeckSource, TEConnectivitySource
 from app.scrapers.employer_feeds import AliorSource, HitachiSource, PhenomSource
+from app.scrapers.structured_careers import SmartRecruitersSource, TauronSource
 from app.scrapers.workday import WorkdayConfig, WorkdaySource
 
 
@@ -122,6 +123,17 @@ def _company_sources() -> list[JobSource]:
         ),
     ]
     pages = [
+        CareerPageConfig("Kärcher Careers", "Kärcher", "https://careers.kaercher.com/search/"),
+        CareerPageConfig(
+            "GGS IT Consulting Careers",
+            "GGS IT Consulting",
+            "https://jobs.smartrecruiters.com/GGSITConsultingGoGlobalServices",
+        ),
+        CareerPageConfig(
+            "TAURON Dystrybucja Careers",
+            "TAURON Dystrybucja",
+            "https://www.tauron-dystrybucja.pl/oferty-pracy",
+        ),
         CareerPageConfig("Aon Careers", "Aon", "https://jobs.aon.com/jobs"),
         CareerPageConfig("Zurich Careers", "Zurich", "https://www.careers.zurich.com/search/"),
         CareerPageConfig(
@@ -215,6 +227,9 @@ def _company_sources() -> list[JobSource]:
         ),
     ]
     adapters = {
+        "Kärcher": SAPCareersSource,
+        "GGS IT Consulting": SmartRecruitersSource,
+        "TAURON Dystrybucja": TauronSource,
         "Aon": JibeCareersSource,
         "Zurich": SAPCareersSource,
         "Verisk": OracleCareersSource,
