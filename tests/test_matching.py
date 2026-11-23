@@ -65,6 +65,21 @@ def test_billing_is_not_a_business_intelligence_keyword():
     assert "Data Analytics" not in classify_job("Billing Intern")
 
 
+def test_excellent_does_not_count_as_excel_skill_or_score():
+    description = "Excellent communication and excellent organizational skills."
+    result = score_job(make_job("Student Internship - Talent Acquisition", description))
+    assert "Excel" not in extract_skills(description)
+    assert not any(reason["label"] == "Excel" for reason in result.explanation)
+    assert result.score == 48
+
+
+@pytest.mark.parametrize("product", ["Excel", "MS Excel", "Microsoft Excel", "Excel/VBA"])
+def test_excel_product_names_still_match(product):
+    result = score_job(make_job("Student Internship", f"Knowledge of {product}."))
+    assert "Excel" in result.skills
+    assert {"label": "Excel", "points": 7} in result.explanation
+
+
 @pytest.mark.parametrize(
     "description",
     [

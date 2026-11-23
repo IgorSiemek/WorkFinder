@@ -6,7 +6,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from contextvars import copy_context
 from datetime import timedelta
 
-from sqlalchemy import select
+from sqlalchemy import or_, select
 from sqlalchemy.orm import Session
 
 from app.models import (
@@ -21,7 +21,7 @@ from app.models import (
 )
 from app.profiles.scope import active_scope, job_filter, location_matches, role_matches
 from app.scrapers.base import JobPosting, SearchCriteria
-from app.scrapers.common import INTERNSHIP_KEYWORDS
+from app.scrapers.common import INTERNSHIP_KEYWORDS, is_talent_pool
 from app.scrapers.registry import enabled_sources
 from app.scrapers.workday_limits import WorkdayRateLimited
 from app.services.backups import automatic_backup
@@ -136,8 +136,12 @@ def import_posting(
 ) -> tuple[Job, str]:
     duplicate = find_duplicate(session, posting)
     if duplicate:
+        was_talent_pool = is_talent_pool(duplicate.title, duplicate.description)
         duplicate.last_seen = utcnow()
         duplicate.is_active = True
+        if was_talent_pool:
+            duplicate.title = posting.title[:300]
+            duplicate.original_url = posting.url
         if posting.date_posted is not None:
             duplicate.date_posted = (
                 min(duplicate.date_posted, posting.date_posted)
@@ -146,7 +150,7 @@ def import_posting(
             )
         if evidence := posting.raw_payload.get("_publication_check"):
             save_date_evidence(duplicate, evidence)
-        if len(posting.description) > len(duplicate.description):
+        if len(posting.description) > len(duplicate.description) or was_talent_pool:
             duplicate.description = posting.description
         _add_occurrence(session, duplicate, posting)
         result = score_job(duplicate, profile)
@@ -251,6 +255,18 @@ def run_search(session: Session, *, source_names: list[str] | None = None) -> Se
                         observation.detail = (
                             "Employer advertises future opportunities, not a confirmed vacancy"
                         )
+                        try:
+                            identifiers = [Job.canonical_url == canonicalize_url(posting.url)]
+                        except ValueError:
+                            continue
+                        if posting.source_job_id:
+                            identifiers.append(Job.source_job_id == posting.source_job_id)
+                        existing = session.scalar(
+                            select(Job).where(Job.source == source.name, or_(*identifiers))
+                        )
+                        if existing is not None:
+                            existing.is_active = False
+                            observation.job_id = existing.id
                         continue
                     if not role_matches(posting.title, posting.employment_type, posting.seniority):
                         continue
