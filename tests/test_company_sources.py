@@ -163,6 +163,13 @@ def test_all_requested_krakow_companies_have_enabled_sources() -> None:
         "TE Connectivity",
         "StoneX",
         "IG Group",
+        "Shell",
+        "ABB",
+        "Aon",
+        "Verisk",
+        "Zurich",
+        "Kingfisher",
+        "International Paper",
     }
     companies = {
         source.config.company

@@ -41,7 +41,7 @@ class HaviDescription(HTMLParser):
             self.parts.append(data)
 
 
-class HaviSource(CareerPageSource):
+class SAPCareersSource(CareerPageSource):
     """Scan the official SAP careers table for Kraków across all result pages."""
 
     max_pages = 40
@@ -78,7 +78,9 @@ class HaviSource(CareerPageSource):
                 elif "there are currently no open positions matching" in summary.casefold():
                     total = 0
                 else:
-                    raise ValueError("HAVI careers table has no verifiable result count")
+                    raise ValueError(
+                        f"{self.config.company} careers table has no verifiable result count"
+                    )
                 page_urls: set[str] = set()
                 for row in re.findall(r"<tr\b[^>]*>(.*?)</tr>", html, re.I | re.S):
                     anchors = [
@@ -107,7 +109,7 @@ class HaviSource(CareerPageSource):
                     parser.feed(detail.text)
                     description = plain_text(" ".join(parser.parts))
                     if not description:
-                        raise ValueError("HAVI job description is unavailable")
+                        raise ValueError(f"{self.config.company} job description is unavailable")
                     date_cell = re.search(
                         r'<td\b[^>]*class=["\'][^"\']*colDate[^"\']*["\'][^>]*>(.*?)</td>',
                         row,
@@ -122,7 +124,9 @@ class HaviSource(CareerPageSource):
                                 datetime.strptime(label, "%d %b %Y").date().isoformat()
                             )
                         if posted:
-                            evidence = PublicationDate(posted, "HAVI job-date", label)
+                            evidence = PublicationDate(
+                                posted, f"{self.config.company} job-date", label
+                            )
                     posting = JobPosting(
                         source=self.name,
                         source_job_id=url.rstrip("/").rsplit("/", 1)[-1],
@@ -150,17 +154,20 @@ class HaviSource(CareerPageSource):
                 offset += len(page_urls)
         self.scan_complete = self.can_confirm_absence = self.scan_complete and not missing_city
         self.last_search_note = (
-            "HAVI internship city metadata unavailable"
+            f"{self.config.company} internship city metadata unavailable"
             if missing_city
             else ""
             if self.scan_complete
-            else "HAVI pagination incomplete"
+            else f"{self.config.company} pagination incomplete"
         )
         return results
 
 
-class PepsiCoSource(CareerPageSource):
-    """Read the public careers API used by PepsiCo's job search."""
+HaviSource = SAPCareersSource
+
+
+class JibeCareersSource(CareerPageSource):
+    """Read public Jibe careers APIs, including PepsiCo and Aon."""
 
     max_pages = 40
 
@@ -189,7 +196,9 @@ class PepsiCoSource(CareerPageSource):
                 response.raise_for_status()
                 data = response.json()
                 if "totalCount" not in data or not isinstance(data.get("jobs"), list):
-                    raise ValueError("PepsiCo careers API returned no valid result set")
+                    raise ValueError(
+                        f"{self.config.company} careers API returned no valid result set"
+                    )
                 total = int(data["totalCount"])
                 before = len(seen)
                 for record in data["jobs"]:
@@ -210,7 +219,11 @@ class PepsiCoSource(CareerPageSource):
                     )
                     posted = source_date(item.get("posted_date"))
                     evidence = (
-                        PublicationDate(posted, "PepsiCo posted_date", str(item.get("posted_date")))
+                        PublicationDate(
+                            posted,
+                            f"{self.config.company} posted_date",
+                            str(item.get("posted_date")),
+                        )
                         if posted
                         else PublicationDate()
                     )
@@ -253,17 +266,20 @@ class PepsiCoSource(CareerPageSource):
                     break
         self.scan_complete = self.can_confirm_absence = self.scan_complete and not missing_city
         self.last_search_note = (
-            "PepsiCo internship city metadata unavailable"
+            f"{self.config.company} internship city metadata unavailable"
             if missing_city
             else ""
             if self.scan_complete
-            else "PepsiCo pagination incomplete"
+            else f"{self.config.company} pagination incomplete"
         )
         return results
 
 
-class EuroclearSource(CareerPageSource):
-    """Scan Euroclear's public Oracle job feed, preserving ambiguous city metadata."""
+PepsiCoSource = JibeCareersSource
+
+
+class OracleCareersSource(CareerPageSource):
+    """Scan public Oracle careers feeds, preserving ambiguous city metadata."""
 
     max_pages = 20
     api_path = "/hcmRestApi/resources/11.13.18.05/"
@@ -276,6 +292,10 @@ class EuroclearSource(CareerPageSource):
         unknown_city = 0
         origin = urlsplit(self.config.url)
         api = f"{origin.scheme}://{origin.netloc}" + self.api_path
+        site = re.search(r"/sites/([^/]+)", origin.path)
+        if site is None:
+            raise ValueError("Oracle careers URL requires an explicit site")
+        site_number = site[1]
         with httpx.Client(
             timeout=settings.request_timeout_seconds,
             headers={"User-Agent": settings.user_agent},
@@ -287,13 +307,17 @@ class EuroclearSource(CareerPageSource):
                     params={
                         "onlyData": "true",
                         "expand": "requisitionList",
-                        "finder": f"findReqs;siteNumber=CX_1003,limit=100,offset={page * 100}",
+                        "finder": (
+                            f"findReqs;siteNumber={site_number},limit=100,offset={page * 100}"
+                        ),
                     },
                 )
                 response.raise_for_status()
                 groups = response.json().get("items", [])
                 if len(groups) != 1 or "TotalJobsCount" not in groups[0]:
-                    raise ValueError("Euroclear careers API returned no valid result count")
+                    raise ValueError(
+                        f"{self.config.company} careers API returned no valid result count"
+                    )
                 group = groups[0]
                 total = int(group["TotalJobsCount"])
                 before = len(seen)
@@ -309,13 +333,13 @@ class EuroclearSource(CareerPageSource):
                         params={
                             "onlyData": "true",
                             "expand": "all",
-                            "finder": f"ById;Id={identifier},siteNumber=CX_1003",
+                            "finder": f"ById;Id={identifier},siteNumber={site_number}",
                         },
                     )
                     detail.raise_for_status()
                     details = detail.json().get("items", [])
                     if len(details) != 1:
-                        raise ValueError("Euroclear job details are unavailable")
+                        raise ValueError(f"{self.config.company} job details are unavailable")
                     info = details[0]
                     locations = [info.get("PrimaryLocation") or ""]
                     for key in ("workLocation", "otherWorkLocations"):
@@ -376,6 +400,9 @@ class EuroclearSource(CareerPageSource):
             if unknown_city
             else ""
             if self.scan_complete
-            else "Euroclear pagination incomplete"
+            else f"{self.config.company} pagination incomplete"
         )
         return results
+
+
+EuroclearSource = OracleCareersSource

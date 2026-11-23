@@ -18,7 +18,10 @@ def public_client(monkeypatch, handler):
     )
 
 
-def test_havi_reads_later_pages_and_preserves_description_and_publication_date(monkeypatch):
+@pytest.mark.parametrize("company", ["HAVI", "Zurich"])
+def test_havi_reads_later_pages_and_preserves_description_and_publication_date(
+    monkeypatch, company
+):
     calls = []
 
     def handler(request):
@@ -43,7 +46,7 @@ def test_havi_reads_later_pages_and_preserves_description_and_publication_date(m
         return httpx.Response(200, text="Results 1 – 2 of 3<table>" + rows + "</table>")
 
     public_client(monkeypatch, handler)
-    source = HaviSource(CareerPageConfig("HAVI", "HAVI", "https://example.com/search/"))
+    source = HaviSource(CareerPageConfig(company, company, "https://example.com/search/"))
     jobs = source.search_jobs(SearchCriteria())
     assert [job.source_job_id for job in jobs] == ["3"]
     assert jobs[0].description == "Finance Excel and SAP reporting."
@@ -97,7 +100,8 @@ def pepsi_record(identifier, city="Krakow", **values):
     }
 
 
-def test_pepsico_paginates_and_checks_each_roles_city_and_remote_type(monkeypatch):
+@pytest.mark.parametrize("company", ["PepsiCo", "Aon"])
+def test_pepsico_paginates_and_checks_each_roles_city_and_remote_type(monkeypatch, company):
     calls = []
 
     def handler(request):
@@ -122,7 +126,7 @@ def test_pepsico_paginates_and_checks_each_roles_city_and_remote_type(monkeypatc
         return httpx.Response(200, json={"totalCount": 4, "jobs": rows})
 
     public_client(monkeypatch, handler)
-    source = PepsiCoSource(CareerPageConfig("PepsiCo", "PepsiCo", "https://example.com/main/jobs"))
+    source = PepsiCoSource(CareerPageConfig(company, company, "https://example.com/main/jobs"))
     jobs = source.search_jobs(SearchCriteria())
     assert [job.source_job_id for job in jobs] == ["1", "3"]
     assert jobs[0].remote_type == "Hybrid"
@@ -166,8 +170,12 @@ def test_pepsico_missing_result_schema_is_an_error(monkeypatch):
         source.search_jobs(SearchCriteria())
 
 
-def test_euroclear_country_only_offers_remain_unverified_and_city_metadata_is_used(monkeypatch):
+@pytest.mark.parametrize("site", ["CX_1003", "CX_1"])
+def test_euroclear_country_only_offers_remain_unverified_and_city_metadata_is_used(
+    monkeypatch, site
+):
     def handler(request):
+        assert f"siteNumber={site}" in request.url.params["finder"]
         if request.url.path.endswith("recruitingCEJobRequisitions"):
             return httpx.Response(
                 200,
@@ -210,7 +218,7 @@ def test_euroclear_country_only_offers_remain_unverified_and_city_metadata_is_us
         CareerPageConfig(
             "Euroclear",
             "Euroclear",
-            "https://example.com/hcmUI/CandidateExperience/en/sites/CX_1003/jobs",
+            f"https://example.com/hcmUI/CandidateExperience/en/sites/{site}/jobs",
         )
     )
     jobs = source.search_jobs(SearchCriteria())

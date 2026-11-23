@@ -266,8 +266,8 @@ class TEConnectivitySource(CareerPageSource):
         return results
 
 
-class StoneXSource(CareerPageSource):
-    """Scan the official international iCIMS portal, checking each offer's city."""
+class ICIMSSource(CareerPageSource):
+    """Scan public iCIMS portals, checking each offer's city."""
 
     max_pages = 40
 
@@ -289,14 +289,14 @@ class StoneXSource(CareerPageSource):
                     if "there are currently no job openings" in summary.casefold():
                         self.scan_complete = True
                         break
-                    raise ValueError("StoneX search has no verifiable pagination")
+                    raise ValueError(f"{self.config.company} search has no verifiable pagination")
                 if int(pages[1]) != page + 1:
                     break
                 cards = re.findall(
                     r'<li\b[^>]*class="iCIMS_JobCardItem"[^>]*>(.*?)</li>', html, re.I | re.S
                 )
                 if not cards:
-                    raise ValueError("StoneX search has no job cards")
+                    raise ValueError(f"{self.config.company} search has no job cards")
                 before = len(seen)
                 for card in cards:
                     link = next(
@@ -308,10 +308,10 @@ class StoneXSource(CareerPageSource):
                         None,
                     )
                     if not link:
-                        raise ValueError("StoneX job link is unavailable")
+                        raise ValueError(f"{self.config.company} job link is unavailable")
                     url = urljoin(self.config.url, link[1]).split("?", 1)[0]
                     if urlsplit(url).netloc != urlsplit(self.config.url).netloc:
-                        raise ValueError("Unexpected StoneX job host")
+                        raise ValueError(f"Unexpected {self.config.company} job host")
                     identifier = re.search(r"/jobs/(\d+)/", url)[1]
                     if identifier in seen:
                         continue
@@ -319,7 +319,7 @@ class StoneXSource(CareerPageSource):
                     heading = re.search(r"<h3\b[^>]*>(.*?)</h3>", link[2], re.I | re.S)
                     title = plain_text(heading[1]) if heading else ""
                     if not title:
-                        raise ValueError("StoneX job title is unavailable")
+                        raise ValueError(f"{self.config.company} job title is unavailable")
                     if not is_internship_role(title):
                         continue
                     location = re.search(
@@ -341,6 +341,9 @@ class StoneXSource(CareerPageSource):
         self.last_search_note = (
             ""
             if self.scan_complete
-            else "StoneX pagination incomplete or internship city unavailable"
+            else f"{self.config.company} pagination incomplete or internship city unavailable"
         )
         return results
+
+
+StoneXSource = ICIMSSource

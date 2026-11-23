@@ -4,9 +4,9 @@ from dataclasses import dataclass
 
 from app.scrapers.arbeitnow import ArbeitnowSource
 from app.scrapers.base import JobSource
-from app.scrapers.business_centres import EuroclearSource, HaviSource, PepsiCoSource
+from app.scrapers.business_centres import JibeCareersSource, OracleCareersSource, SAPCareersSource
 from app.scrapers.career_pages import CareerPageConfig, CareerPageSource
-from app.scrapers.early_careers import LundbeckSource, StoneXSource, TEConnectivitySource
+from app.scrapers.early_careers import ICIMSSource, LundbeckSource, TEConnectivitySource
 from app.scrapers.employer_feeds import AliorSource, HitachiSource, PhenomSource
 from app.scrapers.workday import WorkdayConfig, WorkdaySource
 
@@ -20,6 +20,24 @@ class ProviderInfo:
 
 def _company_sources() -> list[JobSource]:
     workday_sources = [
+        WorkdaySource(
+            WorkdayConfig(
+                name="ABB Careers",
+                company="ABB",
+                host="abb.wd3.myworkdayjobs.com",
+                tenant="abb",
+                site="External_Career_Page",
+            )
+        ),
+        WorkdaySource(
+            WorkdayConfig(
+                name="Shell Careers",
+                company="Shell",
+                host="shell.wd3.myworkdayjobs.com",
+                tenant="shell",
+                site="Proactive",
+            )
+        ),
         WorkdaySource(
             WorkdayConfig(
                 name="BBH Careers",
@@ -104,6 +122,24 @@ def _company_sources() -> list[JobSource]:
         ),
     ]
     pages = [
+        CareerPageConfig("Aon Careers", "Aon", "https://jobs.aon.com/jobs"),
+        CareerPageConfig("Zurich Careers", "Zurich", "https://www.careers.zurich.com/search/"),
+        CareerPageConfig(
+            "Verisk Careers",
+            "Verisk",
+            "https://fa-ewmy-saasfaprod1.fa.ocs.oraclecloud.com/"
+            "hcmUI/CandidateExperience/en/sites/CX_1/jobs",
+        ),
+        CareerPageConfig(
+            "International Paper Careers",
+            "International Paper",
+            "https://jobs.internationalpaper.com/hcmUI/CandidateExperience/en/sites/CX_1/jobs",
+        ),
+        CareerPageConfig(
+            "Kingfisher Careers",
+            "Kingfisher",
+            "https://careers-kingfisher2.icims.com/jobs/search",
+        ),
         CareerPageConfig(
             "Hitachi Careers",
             "Hitachi",
@@ -179,16 +215,21 @@ def _company_sources() -> list[JobSource]:
         ),
     ]
     adapters = {
+        "Aon": JibeCareersSource,
+        "Zurich": SAPCareersSource,
+        "Verisk": OracleCareersSource,
+        "International Paper": OracleCareersSource,
+        "Kingfisher": ICIMSSource,
         "Hitachi": HitachiSource,
         "Alior": AliorSource,
         "Philip Morris International": PhenomSource,
         "Cisco": PhenomSource,
-        "HAVI": HaviSource,
-        "PepsiCo": PepsiCoSource,
-        "Euroclear": EuroclearSource,
+        "HAVI": SAPCareersSource,
+        "PepsiCo": JibeCareersSource,
+        "Euroclear": OracleCareersSource,
         "Lundbeck": LundbeckSource,
         "TE Connectivity": TEConnectivitySource,
-        "StoneX": StoneXSource,
+        "StoneX": ICIMSSource,
     }
     return workday_sources + [
         adapters.get(config.company, CareerPageSource)(config) for config in pages
@@ -214,9 +255,7 @@ def enabled_sources() -> list[JobSource]:
 
 def company_career_pages() -> dict[str, dict[str, str]]:
     pages = {
-        "Shell": {"url": "https://shell.wd3.myworkdayjobs.com/Proactive", "mode": "Manual"},
-        "ABB": {"url": "https://careers.abb/global/en/early-careers", "mode": "Manual"},
-        "Aon": {"url": "https://jobs.aon.com/", "mode": "Manual"},
+        "Jacobs": {"url": "https://careers.jacobs.com/", "mode": "Manual"},
     }
     for source in _company_sources():
         config = source.config
