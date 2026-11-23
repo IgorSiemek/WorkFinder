@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 
 import httpx
@@ -58,7 +59,13 @@ def test_workday_talent_pools_are_audited_while_real_internships_are_imported(
     assert sum(row.outcome == "excluded_talent_pool" for row in observations) == 2
 
 
-def test_confirmed_pool_retires_legacy_import_and_real_vacancy_can_reopen_it(session, monkeypatch):
+@pytest.mark.parametrize("legacy_source", ["ABB Careers", "Aggregated Careers"])
+@pytest.mark.parametrize(
+    "future_url", ["https://example.com/job/future-finance-R1", "javascript:invalid"]
+)
+def test_confirmed_pool_retires_legacy_import_and_real_vacancy_can_reopen_it(
+    session, monkeypatch, legacy_source, future_url
+):
     future = JobPosting(
         source="ABB Careers",
         source_job_id="R1",
@@ -68,7 +75,9 @@ def test_confirmed_pool_retires_legacy_import_and_real_vacancy_can_reopen_it(ses
         url="https://example.com/job/finance-R1",
         description="This role is part of our talent pipeline. Apply for future opportunities.",
     )
-    legacy, _ = search.import_posting(session, future)
+    legacy, _ = search.import_posting(session, replace(future, source=legacy_source))
+    linked, _ = search.import_posting(session, future)
+    assert linked.id == legacy.id
     identifier = legacy.id
     legacy.notes = "Existing note"
     legacy.application = Application(status="Saved", notes="Existing application")
@@ -86,7 +95,7 @@ def test_confirmed_pool_retires_legacy_import_and_real_vacancy_can_reopen_it(ses
     )
     session.commit()
     future.raw_payload["talent_pool"] = True
-    future.url = "https://example.com/job/future-finance-R1"
+    future.url = future_url
     postings = [future]
 
     class Provider:

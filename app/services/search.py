@@ -6,7 +6,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from contextvars import copy_context
 from datetime import timedelta
 
-from sqlalchemy import or_, select
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.models import (
@@ -25,7 +25,7 @@ from app.scrapers.common import INTERNSHIP_KEYWORDS, is_talent_pool
 from app.scrapers.registry import enabled_sources
 from app.scrapers.workday_limits import WorkdayRateLimited
 from app.services.backups import automatic_backup
-from app.services.deduplication import find_duplicate
+from app.services.deduplication import find_duplicate, find_exact_duplicate
 from app.services.ignoring import apply_ignore_rules
 from app.services.matching import score_job
 from app.services.normalization import canonicalize_url, job_hash
@@ -255,15 +255,7 @@ def run_search(session: Session, *, source_names: list[str] | None = None) -> Se
                         observation.detail = (
                             "Employer advertises future opportunities, not a confirmed vacancy"
                         )
-                        try:
-                            identifiers = [Job.canonical_url == canonicalize_url(posting.url)]
-                        except ValueError:
-                            continue
-                        if posting.source_job_id:
-                            identifiers.append(Job.source_job_id == posting.source_job_id)
-                        existing = session.scalar(
-                            select(Job).where(Job.source == source.name, or_(*identifiers))
-                        )
+                        existing = find_exact_duplicate(session, posting)
                         if existing is not None:
                             existing.is_active = False
                             observation.job_id = existing.id

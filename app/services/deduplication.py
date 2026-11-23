@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from contextlib import suppress
 from difflib import SequenceMatcher
 
 from sqlalchemy import or_, select
@@ -62,8 +63,13 @@ def postings_match(left: JobPosting | Job, right: JobPosting | Job) -> bool:
     return title_score >= 0.84
 
 
-def find_duplicate(session: Session, posting: JobPosting) -> Job | None:
-    direct_conditions = [Job.canonical_url == canonicalize_url(posting.url)]
+def find_exact_duplicate(session: Session, posting: JobPosting) -> Job | None:
+    """Match stable IDs and known URLs, including secondary provider occurrences."""
+    direct_conditions = [
+        (JobOccurrence.source == posting.source) & (JobOccurrence.url == posting.url)
+    ]
+    with suppress(ValueError):
+        direct_conditions.append(Job.canonical_url == canonicalize_url(posting.url))
     if posting.source_job_id:
         direct_conditions.extend(
             [
@@ -77,9 +83,15 @@ def find_duplicate(session: Session, posting: JobPosting) -> Job | None:
                 ),
             ]
         )
-    direct = session.scalar(
+    return session.scalar(
         select(Job).outerjoin(JobOccurrence).where(or_(*direct_conditions)).limit(1)
     )
+
+
+def find_duplicate(session: Session, posting: JobPosting) -> Job | None:
+    # Normal imports require a valid URL even when an employer ID already matches.
+    canonicalize_url(posting.url)
+    direct = find_exact_duplicate(session, posting)
     if direct:
         return direct
     company_token = posting.company.split()[0][:40]
