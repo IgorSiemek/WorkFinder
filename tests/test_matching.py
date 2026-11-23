@@ -63,3 +63,24 @@ def test_analytical_internship_titles_reach_notification_threshold(title, catego
 
 def test_billing_is_not_a_business_intelligence_keyword():
     assert "Data Analytics" not in classify_job("Billing Intern")
+
+
+@pytest.mark.parametrize(
+    "description",
+    [
+        "Finance analysis and Excel. Report to the Finance Manager.",
+        "Finance analysis and Excel. Learn from senior analysts.",
+        "Finance analysis and Excel. Work with the Director of Finance.",
+    ],
+)
+def test_internship_is_not_penalized_for_mentors_in_its_description(description):
+    result = score_job(make_job("Trainee", description))
+    assert result.score >= 60
+    assert not any(reason["label"] == "Senior role" for reason in result.explanation)
+
+
+@pytest.mark.parametrize("seniority", ["Senior", "Lead", "Manager"])
+def test_senior_metadata_still_reduces_the_score(seniority):
+    job = make_job("Finance Analyst", "Financial reporting and Excel.")
+    job.seniority = seniority
+    assert {"label": "Senior role", "points": -28} in score_job(job).explanation
