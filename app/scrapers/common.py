@@ -55,6 +55,19 @@ def is_internship_role(title: str, employment_type: str = "", seniority: str = "
     return internship_label(title, employment_type, seniority) is not None
 
 
+def is_talent_pool(title: str, description: str) -> bool:
+    return any(
+        phrase in title.casefold()
+        for phrase in ("talent pool", "talent community", "future opportunities")
+    ) or any(
+        phrase in description.casefold()
+        for phrase in (
+            "this exact role may not be open",
+            "this posting is to advertise potential job opportunities",
+        )
+    )
+
+
 def plain_text(value: str | None) -> str:
     if not value:
         return ""

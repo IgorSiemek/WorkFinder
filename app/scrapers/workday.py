@@ -7,7 +7,7 @@ import httpx
 
 from app.config import settings
 from app.scrapers.base import JobPosting, JobSource, SearchCriteria
-from app.scrapers.common import is_internship_role, plain_text, relevant_to_krakow
+from app.scrapers.common import is_internship_role, is_talent_pool, plain_text, relevant_to_krakow
 from app.scrapers.publication_dates import PublicationDate, date_evidence, source_date
 from app.scrapers.workday_http import WorkdayHttp
 from app.scrapers.workday_limits import WorkdayRateLimited
@@ -156,7 +156,11 @@ class WorkdaySource(JobSource):
                             f"Official {self.config.company} listing. "
                             f"{title}. Location: {location}."
                         ),
-                        raw_payload={**item, "_publication_check": evidence},
+                        raw_payload={
+                            **item,
+                            "talent_pool": is_talent_pool(title, description),
+                            "_publication_check": evidence,
+                        },
                     )
                 )
             offset += len(postings)

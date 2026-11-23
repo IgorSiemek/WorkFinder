@@ -10,7 +10,7 @@ import httpx
 from app.config import settings
 from app.scrapers.base import JobPosting, SearchCriteria
 from app.scrapers.career_pages import ANCHOR_PATTERN, CareerPageConfig, CareerPageSource
-from app.scrapers.common import is_internship_role, plain_text, relevant_to_krakow
+from app.scrapers.common import is_internship_role, is_talent_pool, plain_text, relevant_to_krakow
 from app.scrapers.publication_dates import (
     PublicationDate,
     date_evidence,
@@ -111,16 +111,6 @@ class PhenomSource(CareerPageSource):
             )
             remote = pattern[1] if pattern else ""
         posted = source_date(item.get("postedDate"))
-        pool = any(
-            phrase in description.casefold()
-            for phrase in (
-                "this exact role may not be open",
-                "this posting is to advertise potential job opportunities",
-            )
-        ) or any(
-            phrase in title.casefold()
-            for phrase in ("talent pool", "talent community", "future opportunities")
-        )
         return JobPosting(
             source=self.name,
             source_job_id=job_id,
@@ -141,7 +131,7 @@ class PhenomSource(CareerPageSource):
                 "discovery": "official-phenom-search",
                 "jobId": job_id,
                 "jobSeqNo": item.get("jobSeqNo"),
-                "talent_pool": pool,
+                "talent_pool": is_talent_pool(title, description),
                 "_publication_check": date_evidence(
                     PublicationDate(posted, "Employer postedDate", str(item.get("postedDate")))
                     if posted
