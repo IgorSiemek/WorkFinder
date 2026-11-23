@@ -21,7 +21,7 @@ class SmartRecruitersSource(CareerPageSource):
         company_slug = urlsplit(self.config.url).path.strip("/")
         api_url = f"https://api.smartrecruiters.com/v1/companies/{company_slug}/postings"
         seen: set[str] = set()
-        results: list[JobPosting] = []
+        results: dict[str, JobPosting] = {}
         offset = 0
         with public_client() as client:
             for _ in range(20):
@@ -71,7 +71,7 @@ class SmartRecruitersSource(CareerPageSource):
                     posted = source_date(published)
                     posting = JobPosting(
                         source=self.name,
-                        source_job_id=identifier,
+                        source_job_id=item["jobAdId"],
                         url=url,
                         title=title,
                         company=self.config.company,
@@ -93,7 +93,7 @@ class SmartRecruitersSource(CareerPageSource):
                         },
                     )
                     if matches(posting, criteria):
-                        results.append(posting)
+                        results.setdefault(item["jobAdId"], posting)
                 if len(seen) == total:
                     self.scan_complete = self.can_confirm_absence = not missing_city
                     break
@@ -107,7 +107,7 @@ class SmartRecruitersSource(CareerPageSource):
             if self.scan_complete
             else "SmartRecruiters pagination incomplete"
         )
-        return results
+        return list(results.values())
 
 
 class TauronSource(CareerPageSource):

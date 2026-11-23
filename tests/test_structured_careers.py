@@ -25,6 +25,7 @@ def test_smartrecruiters_paginates_and_uses_current_public_job_details(monkeypat
             200,
             json={
                 "name": "SQL Intern",
+                "jobAdId": "stable-ad-2",
                 "active": True,
                 "visibility": "PUBLIC",
                 "location": {"city": "Kraków", "hybrid": True},
@@ -44,7 +45,7 @@ def test_smartrecruiters_paginates_and_uses_current_public_job_details(monkeypat
     )
     jobs = source.search_jobs(SearchCriteria(keywords=["data quality"]))
     assert requested_offsets == [0, 1]
-    assert [job.source_job_id for job in jobs] == ["2"]
+    assert [job.source_job_id for job in jobs] == ["stable-ad-2"]
     assert jobs[0].date_posted == date(2025, 1, 16) and jobs[0].remote_type == "Hybrid"
     assert source.scan_complete
 
