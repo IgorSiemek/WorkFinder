@@ -3,6 +3,7 @@ from __future__ import annotations
 from html import escape
 
 from app.models import Job
+from app.scrapers.common import is_talent_pool
 from app.services.progress import APPLICATION_STATUSES
 
 STATUS_LABELS = (
@@ -61,7 +62,10 @@ def job_card(job: Job, *, detailed: bool = False) -> dict:
             if app.notes:
                 text += "\nNotatka · " + escape(app.notes[:400])
     if not job.is_active:
-        text += "\nOferta nieaktywna"
+        if is_talent_pool(job.title, job.description or ""):
+            text += "\nNabór przyszły · zgłoszenie do bazy kandydatów"
+        else:
+            text += "\nOferta nieaktywna"
     if job.ignored:
         text += "\nOferta pominięta"
     if detailed:
