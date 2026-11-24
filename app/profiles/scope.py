@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import re
 import unicodedata
+from datetime import date
 
 from app.profiles.context import current_profile
 from app.scrapers.common import INTERNSHIP_PATTERN, is_internship_role, relevant_to_krakow
@@ -13,6 +14,7 @@ SCOPE_DEFAULTS = {
     "titles": [],
     "excluded_titles": [],
 }
+SHARED_INCLUDE_JOB_KEY = "_shared_include_job"
 
 
 def validate_scope(raw: object) -> dict:
@@ -128,3 +130,20 @@ def job_filter():
     remote = Job.remote_type == "Remote"
     filters.append(or_(location, remote) if scope["remote_allowed"] else and_(location, ~remote))
     return and_(*filters)
+
+
+def matching_job_filter(minimum_score: int, today: date):
+    from sqlalchemy import and_, or_
+
+    from app.models import Job
+
+    matching = and_(job_filter(), Job.match_score >= minimum_score)
+    if active_scope() is not None:
+        return matching
+    return or_(
+        matching,
+        and_(
+            Job.raw_payload[SHARED_INCLUDE_JOB_KEY].as_boolean().is_(True),
+            or_(Job.application_deadline.is_(None), Job.application_deadline >= today),
+        ),
+    )

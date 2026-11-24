@@ -6,7 +6,7 @@ from sqlalchemy import func, or_, select
 from sqlalchemy.orm import Session, selectinload
 
 from app.models import Application, CandidateProfile, Job, utcnow
-from app.profiles.scope import active_scope, job_filter, role_matches
+from app.profiles.scope import active_scope, matching_job_filter, role_matches
 from app.scrapers.base import JobPosting
 from app.services.normalization import canonicalize_url
 from app.services.progress import (
@@ -43,10 +43,11 @@ def list_jobs(
         if view == "saved":
             filters.append(Job.application.has(Application.status.in_(["Saved", "Preparing"])))
         else:
-            filters.extend([job_filter(), Job.is_active.is_(True)])
+            filters.extend(
+                [matching_job_filter(minimum_score, today or date.today()), Job.is_active.is_(True)]
+            )
             if hide_applied:
                 filters.append(~Job.application.has(Application.status.in_(APPLIED_STATUSES)))
-            filters.append(Job.match_score >= minimum_score)
     selected_days = 7 if days is None and view == "new" else days
     if selected_days:
         filters.append(Job.date_discovered >= utcnow() - timedelta(days=selected_days))

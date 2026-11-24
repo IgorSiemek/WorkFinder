@@ -19,7 +19,13 @@ from app.models import (
     SearchRun,
     utcnow,
 )
-from app.profiles.scope import active_scope, job_filter, location_matches, role_matches
+from app.profiles.scope import (
+    SHARED_INCLUDE_JOB_KEY,
+    active_scope,
+    job_filter,
+    location_matches,
+    role_matches,
+)
 from app.scrapers.base import JobPosting, SearchCriteria
 from app.scrapers.common import INTERNSHIP_KEYWORDS, is_talent_pool
 from app.scrapers.registry import enabled_sources
@@ -75,6 +81,7 @@ def _new_job(posting: JobPosting, profile: CandidateProfile | None) -> Job:
     canonical_url = canonicalize_url(posting.url)
     payload = dict(posting.raw_payload)
     payload.pop(MANUAL_SCORE_FLOOR_KEY, None)
+    payload.pop(SHARED_INCLUDE_JOB_KEY, None)
     job = Job(
         source=posting.source,
         source_job_id=posting.source_job_id,
