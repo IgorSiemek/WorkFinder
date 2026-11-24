@@ -100,7 +100,7 @@ class SAPCareersSource(CareerPageSource):
                     if url in seen or not is_internship_role(title):
                         continue
                     location = re.search(
-                        r'<td\b[^>]*class=["\'][^"\']*colLocation[^"\']*["\'][^>]*>(.*?)</td>',
+                        r'<td\b[^>]*class=["\'][^"\']*col(?:Location|Facility)[^"\']*["\'][^>]*>(.*?)</td>',
                         row,
                         re.I | re.S,
                     )
