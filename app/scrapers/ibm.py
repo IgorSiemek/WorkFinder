@@ -4,7 +4,7 @@ from urllib.parse import parse_qs, urlsplit
 
 from app.scrapers.base import JobPosting, SearchCriteria
 from app.scrapers.career_pages import CareerPageSource
-from app.scrapers.common import is_internship_role, plain_text, relevant_to_krakow
+from app.scrapers.common import is_internship_role, is_talent_pool, plain_text, relevant_to_krakow
 from app.scrapers.early_careers import public_client
 from app.scrapers.employer_feeds import matches
 
@@ -71,6 +71,7 @@ class IBMSource(CareerPageSource):
                         city, "", workplace.casefold() == "remote"
                     ):
                         continue
+                    description = plain_text(item.get("description"))
                     job = JobPosting(
                         source=self.name,
                         source_job_id=identifier,
@@ -78,9 +79,10 @@ class IBMSource(CareerPageSource):
                         title=title,
                         company=self.config.company,
                         location=city,
-                        description=plain_text(item.get("description")),
+                        description=description,
                         employment_type=employment,
                         remote_type="Hybrid" if workplace.casefold() == "hybrid" else "On-site",
+                        raw_payload={"talent_pool": is_talent_pool(title, description)},
                     )
                     if matches(job, criteria):
                         results.append(job)

@@ -23,11 +23,12 @@ def test_ibm_uses_index_location_and_keeps_only_local_internships(monkeypatch) -
 
     data = {
         "hits": {
-            "total": {"value": 3, "relation": "eq"},
+            "total": {"value": 4, "relation": "eq"},
             "hits": [
                 row(146219, "Software Developer Intern 2027", "Krakow, PL", "Internship"),
                 row(1, "Software Developer Intern", "Warsaw, PL", "Internship"),
                 row(2, "Senior Software Developer", "Krakow, PL", "Regular"),
+                row(3, "Software Intern Talent Pool", "Krakow, PL", "Internship"),
             ],
         }
     }
@@ -43,8 +44,10 @@ def test_ibm_uses_index_location_and_keeps_only_local_internships(monkeypatch) -
     )
     source = IBMSource(CareerPageConfig("IBM Careers", "IBM", "https://www.ibm.com/careers/search"))
     jobs = source.search_jobs(SearchCriteria(keywords=["intern"]))
-    assert [job.source_job_id for job in jobs] == ["146219"]
+    assert [job.source_job_id for job in jobs] == ["146219", "3"]
     assert jobs[0].remote_type == "Hybrid"
+    assert jobs[0].raw_payload["talent_pool"] is False
+    assert jobs[1].raw_payload["talent_pool"] is True
     assert source.scan_complete
 
 
