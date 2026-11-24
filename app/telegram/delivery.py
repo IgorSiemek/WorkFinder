@@ -8,7 +8,7 @@ from sqlalchemy import String, case, select, update
 from sqlalchemy.orm import Session
 
 from app.models import BotMessage, Job, utcnow
-from app.profiles.scope import active_scope, job_filter
+from app.profiles.scope import matching_job_filter
 from app.services.jobs import follow_ups, get_job
 from app.services.progress import CLOSED_STATUSES
 from app.telegram.client import TelegramError
@@ -23,6 +23,7 @@ def queue_notifications(session: Session, controller: BotController, now: dateti
     if not started or controller.state(session, "paused"):
         return
     prefix = f"{controller.scope}:job:"
+    local = now.replace(tzinfo=UTC).astimezone(ZoneInfo(controller.config["timezone"]))
     # A correlated EXISTS keeps the scan bounded even after years of searches.
     existing = (
         select(BotMessage.id).where(BotMessage.dedup_key == prefix + Job.id.cast(String)).exists()
@@ -31,11 +32,10 @@ def queue_notifications(session: Session, controller: BotController, now: dateti
         select(Job)
         .where(
             Job.is_demo.is_(False),
-            job_filter(),
+            matching_job_filter(controller.config["minimum_score"], local.date()),
             Job.is_active.is_(True),
             Job.ignored.is_(False),
             ~Job.application.has(),
-            Job.match_score >= controller.config["minimum_score"],
             Job.date_discovered >= datetime.fromisoformat(started),
             ~existing,
         )
@@ -44,7 +44,6 @@ def queue_notifications(session: Session, controller: BotController, now: dateti
     ).all()
     for job in jobs:
         controller.queue(session, f"job:{job.id}", job_card(job))
-    local = now.replace(tzinfo=UTC).astimezone(ZoneInfo(controller.config["timezone"]))
     if (
         controller.state(session, "reminders_enabled", True)
         and local.strftime("%H:%M") >= controller.config["reminder_time"]
@@ -115,24 +114,22 @@ def prepare_message(session: Session, controller: BotController) -> BotMessage |
             message.status = "cancelled"
             session.commit()
             return None
+        today = now.replace(tzinfo=UTC).astimezone(ZoneInfo(controller.config["timezone"])).date()
         if key[0] == "job":
             eligible = (
                 job.is_active
                 and not job.ignored
                 and not job.application
-                and (job.match_score >= controller.config["minimum_score"])
-            )
-            if active_scope() is not None:
-                eligible = (
-                    eligible
-                    and session.scalar(select(Job.id).where(Job.id == job.id, job_filter()))
-                    is not None
+                and session.scalar(
+                    select(Job.id).where(
+                        Job.id == job.id,
+                        matching_job_filter(controller.config["minimum_score"], today),
+                    )
                 )
+                is not None
+            )
         else:
             app = job.application
-            today = (
-                now.replace(tzinfo=UTC).astimezone(ZoneInfo(controller.config["timezone"])).date()
-            )
             eligible = bool(
                 controller.state(session, "reminders_enabled", True)
                 and app

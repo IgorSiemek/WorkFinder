@@ -110,7 +110,10 @@ class BotRuntime:
             try:
                 result = run_search(session, source_names=controller.config["sources"])
                 _, visible_new = list_jobs(
-                    session, "new", minimum_score=controller.config["minimum_score"]
+                    session,
+                    "new",
+                    minimum_score=controller.config["minimum_score"],
+                    today=controller.today(),
                 )
                 rate_limited = sum(
                     provider.status == "rate_limited" for provider in result.provider_runs

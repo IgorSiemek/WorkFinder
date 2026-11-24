@@ -26,7 +26,7 @@ from app.telegram.views import MENU, button, job_card, status_keyboard
 
 HELP = """<b>WorkFinder</b>
 /new — nowe oferty z ostatnich 7 dni
-/all — aktywne staże
+/all — aktywne oferty
 /saved — zapisane oferty
 /applications — historia aplikacji
 /ignored — pominięte oferty
@@ -687,7 +687,7 @@ class BotController:
     def listing(self, session: Session, view: str, page: int) -> list[dict]:
         labels = {
             "new": "Nowe oferty",
-            "all": "Aktywne staże",
+            "all": "Aktywne oferty",
             "saved": "Zapisane",
             "applications": "Moje aplikacje",
             "ignored": "Pominięte",
@@ -704,6 +704,7 @@ class BotController:
             page_size=size,
             minimum_score=self.config["minimum_score"],
             query=query,
+            today=self.today(),
         )
         pages = max(1, (total + size - 1) // size)
         result = [{"text": f"<b>{labels[view]}</b> · {total}\nStrona {page}/{pages}"}]

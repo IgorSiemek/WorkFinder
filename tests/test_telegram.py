@@ -9,7 +9,12 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import sessionmaker
 
 from app.models import Application, ApplicationActivity, BotMessage, Job, utcnow
+from app.profiles.context import ProfileContext, activate_profile
+from app.profiles.scope import SHARED_INCLUDE_JOB_KEY, validate_scope
+from app.scrapers.base import JobPosting
 from app.services.bot_config import validate_config
+from app.services.jobs import list_jobs
+from app.services.search import import_posting
 from app.telegram.client import TelegramClient, TelegramError
 from app.telegram.controller import BotController
 from app.telegram.delivery import (
@@ -201,6 +206,45 @@ def test_pause_and_changed_offer_cancel_stale_delivery(session, controller, job)
     assert session.scalar(select(BotMessage)).status == "cancelled"
 
 
+def test_explicit_shared_offer_appears_and_alerts_once(session, job, tmp_path):
+    controller = BotController(42, validate_config({"minimum_score": 60}))
+    controller.set_state(session, "started_at", (utcnow() - timedelta(days=1)).isoformat())
+    job.title = "Junior Data Analyst"
+    job.match_score = 42
+    job.raw_payload = {SHARED_INCLUDE_JOB_KEY: True}
+    imported, _ = import_posting(
+        session,
+        JobPosting(
+            title="Other Junior Analyst",
+            company="Other",
+            source="Test",
+            source_job_id=None,
+            url="https://example.com/other",
+            location="Kraków",
+            raw_payload={SHARED_INCLUDE_JOB_KEY: True},
+        ),
+    )
+    session.commit()
+    assert SHARED_INCLUDE_JOB_KEY not in imported.raw_payload
+    assert list_jobs(session, "new", minimum_score=60)[0] == [job]
+    private = ProfileContext("private", tmp_path, None, None, validate_scope({}))
+    with activate_profile(private):
+        assert list_jobs(session, "new", minimum_score=60)[0] == []
+        queue_notifications(session, controller, utcnow())
+    assert session.scalar(select(BotMessage)) is None
+    queue_notifications(session, controller, utcnow())
+    message = prepare_message(session, controller)
+    assert message is not None and message.dedup_key.endswith(f":job:{job.id}")
+    assert "42/100" in message.payload["text"]
+    message.status = "sent"
+    session.commit()
+    queue_notifications(session, controller, utcnow())
+    assert session.scalar(select(func.count(BotMessage.id))) == 1
+    job.application_deadline = controller.today() - timedelta(days=1)
+    session.commit()
+    assert list_jobs(session, "all", minimum_score=60)[0] == []
+
+
 def test_reminders_use_warsaw_day_and_skip_closed_processes(session, controller, job):
     now = datetime(2026, 11, 11, 9, 30)
     controller.set_state(session, "started_at", now.isoformat())
@@ -253,11 +297,14 @@ def test_reminders_off_cancels_queued_reminders_only_for_that_chat(session, cont
 
     controller.handle(session, incoming(2, "/reminders on"))
     queue_notifications(session, controller, tomorrow)
-    assert session.scalar(
-        select(BotMessage).where(
-            BotMessage.dedup_key == f"{controller.scope}:{reminder}:{tomorrow.date()}"
-        )
-    ).status == "pending"
+    assert (
+        session.scalar(
+            select(BotMessage).where(
+                BotMessage.dedup_key == f"{controller.scope}:{reminder}:{tomorrow.date()}"
+            )
+        ).status
+        == "pending"
+    )
 
 
 @pytest.mark.parametrize(
