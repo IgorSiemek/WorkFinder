@@ -173,6 +173,10 @@ def test_all_requested_krakow_companies_have_enabled_sources() -> None:
         "Kärcher",
         "GGS IT Consulting",
         "TAURON Dystrybucja",
+        "Deloitte",
+        "Herbalife",
+        "IBM",
+        "Sappi",
     }
     companies = {
         source.config.company

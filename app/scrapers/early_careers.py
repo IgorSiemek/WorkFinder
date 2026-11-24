@@ -5,7 +5,7 @@ import re
 from contextlib import suppress
 from datetime import datetime
 from html.parser import HTMLParser
-from urllib.parse import quote, urljoin, urlsplit
+from urllib.parse import parse_qsl, quote, urljoin, urlsplit
 
 import httpx
 
@@ -276,10 +276,12 @@ class ICIMSSource(CareerPageSource):
         seen = set()
         results = []
         missing_city = False
+        search_params = dict(parse_qsl(urlsplit(self.config.url).query))
         with public_client() as client:
             for page in range(self.max_pages):
                 response = client.get(
-                    self.config.url, params={"ss": "1", "in_iframe": "1", "pr": page}
+                    self.config.url,
+                    params=search_params | {"ss": "1", "in_iframe": "1", "pr": page},
                 )
                 response.raise_for_status()
                 html = response.text

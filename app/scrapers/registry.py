@@ -6,8 +6,10 @@ from app.scrapers.arbeitnow import ArbeitnowSource
 from app.scrapers.base import JobSource
 from app.scrapers.business_centres import JibeCareersSource, OracleCareersSource, SAPCareersSource
 from app.scrapers.career_pages import CareerPageConfig, CareerPageSource
+from app.scrapers.deloitte import DeloitteSource
 from app.scrapers.early_careers import ICIMSSource, LundbeckSource, TEConnectivitySource
 from app.scrapers.employer_feeds import AliorSource, HitachiSource, PhenomSource
+from app.scrapers.ibm import IBMSource
 from app.scrapers.structured_careers import SmartRecruitersSource, TauronSource
 from app.scrapers.workday import WorkdayConfig, WorkdaySource
 
@@ -123,6 +125,18 @@ def _company_sources() -> list[JobSource]:
         ),
     ]
     pages = [
+        CareerPageConfig("IBM Careers", "IBM", "https://www.ibm.com/careers/search?q=Krakow"),
+        CareerPageConfig("Sappi Careers", "Sappi", "https://careers.sappi.com/search/"),
+        CareerPageConfig(
+            "Deloitte Careers",
+            "Deloitte",
+            "https://apply.deloittece.com/en_US/careers/SearchJobs/",
+        ),
+        CareerPageConfig(
+            "Herbalife Careers",
+            "Herbalife",
+            "https://careersen-herbalife.icims.com/jobs/search?searchLocation=Krakow",
+        ),
         CareerPageConfig("Kärcher Careers", "Kärcher", "https://careers.kaercher.com/search/"),
         CareerPageConfig(
             "GGS IT Consulting Careers",
@@ -227,6 +241,10 @@ def _company_sources() -> list[JobSource]:
         ),
     ]
     adapters = {
+        "IBM": IBMSource,
+        "Sappi": SAPCareersSource,
+        "Deloitte": DeloitteSource,
+        "Herbalife": ICIMSSource,
         "Kärcher": SAPCareersSource,
         "GGS IT Consulting": SmartRecruitersSource,
         "TAURON Dystrybucja": TauronSource,
@@ -271,6 +289,8 @@ def enabled_sources() -> list[JobSource]:
 def company_career_pages() -> dict[str, dict[str, str]]:
     pages = {
         "Jacobs": {"url": "https://careers.jacobs.com/", "mode": "Manual"},
+        "i2i Pipelines": {"url": "https://www.pracuj.pl/praca?eid=1074045788", "mode": "Manual"},
+        "EPAM": {"url": "https://careers.epam.com/en/jobs/poland", "mode": "Manual"},
     }
     for source in _company_sources():
         config = source.config
@@ -301,7 +321,6 @@ def provider_catalog() -> list[ProviderInfo]:
         "Talent Days",
         "EY",
         "PwC",
-        "Deloitte",
         "KPMG",
         "Accenture",
         "ING",
